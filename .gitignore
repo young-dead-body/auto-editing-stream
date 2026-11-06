@@ -1,0 +1,34 @@
+# Local environment and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.vscode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# User media, transcripts and exports
+assets/
+results/
+highlights/
+premiere/
+handoff/
+workspace/
+LOCAL_GUIDE.md
+*.prproj
+
+# Packaging output
+build/
+dist/
+installer/
+*.spec
+*.dmg
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+*.log

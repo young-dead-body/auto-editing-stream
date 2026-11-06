@@ -1,0 +1,10 @@
+services:
+  kipofox:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./workspace:/data
+    environment:
+      KIPOFOX_DATA: /data/kipofox
+    restart: unless-stopped

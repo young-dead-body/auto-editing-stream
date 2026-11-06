@@ -1,0 +1,8 @@
+*
+!app.py
+!transcribe_stream.py
+!highlights_to_fcp7xml.py
+!render_preview.py
+!requirements-desktop.txt
+!web/
+!web/index.html
