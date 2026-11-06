@@ -50,7 +50,7 @@ python render_preview.py /path/to/video.mp4 /path/to/highlights.csv /path/to/pre
 
 ## Файлы релиза
 
-При создании тега `v*` или публикации Release для такого тега [GitHub Actions](.github/workflows/installers.yml) прикрепляет к релизу `StreamEditor.exe` для Windows и два контейнерных образа: `StreamEditor-Linux-amd64.docker.tar.gz` для Linux x86-64 и Mac с Intel, `StreamEditor-Linux-arm64.docker.tar.gz` для Linux ARM64 и Mac с Apple Silicon. Это Linux-контейнеры, запускаемые на macOS через Docker Desktop.
+При создании тега `v*` или публикации Release с любым тегом [GitHub Actions](.github/workflows/installers.yml) прикрепляет к релизу `StreamEditor.exe` для Windows и два контейнерных образа: `StreamEditor-Linux-amd64.docker.tar.gz` для Linux x86-64 и Mac с Intel, `StreamEditor-Linux-arm64.docker.tar.gz` для Linux ARM64 и Mac с Apple Silicon. Это Linux-контейнеры, запускаемые на macOS через Docker Desktop.
 
 Загрузите архив для архитектуры компьютера и запустите образ:
 
