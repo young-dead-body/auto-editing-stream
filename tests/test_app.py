@@ -24,10 +24,10 @@ class FakeHandler(app.Handler):
         pass
 
 
-def request(method, path, body=None):
+def request(method, path, body=None, raw=None):
     handler = object.__new__(FakeHandler)
     handler.path = path
-    raw = json.dumps(body).encode() if body is not None else b''
+    raw = raw if raw is not None else json.dumps(body).encode() if body is not None else b''
     handler.headers = {'Content-Length': str(len(raw))}
     handler.rfile = io.BytesIO(raw)
     handler.wfile = io.BytesIO()
@@ -80,6 +80,31 @@ class AppApiTest(unittest.TestCase):
         status, result = request('do_POST', '/api/project', self.project)
         self.assertEqual(status, 400)
         self.assertIn('error', result)
+
+    def test_video_upload_sets_project_and_keeps_bytes(self):
+        content = b'video fixture from browser'
+        status, result = request('do_POST', '/api/upload?name=sample.mp4', raw=content)
+        self.assertEqual(status, 200)
+        path = Path(result['project']['source'])
+        self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(result['size_bytes'], len(content))
+        self.assertIn('transcript_dir', result['project'])
+
+    def test_upload_rejects_unsupported_extension(self):
+        status, result = request('do_POST', '/api/upload?name=sample.txt', raw=b'content')
+        self.assertEqual(status, 400)
+        self.assertIn('error', result)
+        self.assertFalse(list((self.root / 'uploads').glob('*')) if (self.root / 'uploads').exists() else False)
+
+    def test_transcript_progress_metrics(self):
+        work = Path(self.project['transcript_dir'])
+        chunks = work / 'chunks'
+        chunks.mkdir(parents=True)
+        (work / 'progress.json').write_text('{"duration_seconds":3600,"total_chunks":2}')
+        (chunks / 'chunk_0000.json').write_text('{"segments":[]}')
+        metrics = app.transcript_metrics(self.project)
+        self.assertEqual(metrics['completed_chunks'], 1)
+        self.assertEqual(metrics['percent'], 50)
 
 
 if __name__ == '__main__':

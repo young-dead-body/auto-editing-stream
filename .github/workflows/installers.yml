@@ -1,8 +1,12 @@
-name: Build desktop installers
+name: Build release files
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+  release:
+    types: [published]
+permissions:
+  contents: read
 jobs:
   windows:
     runs-on: windows-latest
@@ -12,25 +16,46 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pyinstaller -r requirements-desktop.txt
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name KipofoxStudio --hidden-import faster_whisper --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
-      - run: choco install innosetup --no-progress -y
-      - shell: pwsh
-        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\windows.iss'
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name KipofoxStudio --collect-all faster_whisper --collect-all ctranslate2 --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
       - uses: actions/upload-artifact@v4
         with:
-          name: KipofoxStudio-Windows-installer
-          path: installer/*.exe
-  macos:
-    runs-on: macos-15
+          name: KipofoxStudio-Windows
+          path: dist/KipofoxStudio.exe
+          if-no-files-found: error
+  scripts:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python -m pip install pyinstaller -r requirements-desktop.txt
-      - run: pyinstaller --noconfirm --clean --onedir --windowed --name KipofoxStudio --hidden-import faster_whisper --add-data "web:web" --add-data "transcribe_stream.py:." --add-data "highlights_to_fcp7xml.py:." --add-data "render_preview.py:." app.py
-      - run: hdiutil create -volname "Kipofox Studio" -srcfolder dist/KipofoxStudio.app -ov -format UDZO KipofoxStudio-macOS.dmg
+      - name: Pack Linux and macOS scripts
+        run: |
+          mkdir -p package/KipofoxStudio
+          cp app.py transcribe_stream.py highlights_to_fcp7xml.py render_preview.py requirements-desktop.txt install.sh README.md package/KipofoxStudio/
+          cp -R web package/KipofoxStudio/
+          chmod +x package/KipofoxStudio/install.sh
+          tar -C package -czf KipofoxStudio-Linux.tar.gz KipofoxStudio
+          tar -C package -czf KipofoxStudio-macOS.tar.gz KipofoxStudio
       - uses: actions/upload-artifact@v4
         with:
-          name: KipofoxStudio-macOS-installer
-          path: KipofoxStudio-macOS.dmg
+          name: KipofoxStudio-Scripts
+          path: KipofoxStudio-*.tar.gz
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, scripts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-files/KipofoxStudio.exe release-files/KipofoxStudio-Linux.tar.gz release-files/KipofoxStudio-macOS.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-files/KipofoxStudio.exe release-files/KipofoxStudio-Linux.tar.gz release-files/KipofoxStudio-macOS.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
+          fi

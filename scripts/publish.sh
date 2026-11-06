@@ -2,13 +2,11 @@
 set -euo pipefail
 
 source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-remote="git@github.com:young-dead-body/auto-editing-stream.git"
-ssh_key="${HOME}/.ssh/github_id25519"
-if [[ ! -f "$ssh_key" ]]; then
-  echo "Не найден SSH-ключ: $ssh_key" >&2
+remote="${1:-${KIPOFOX_GIT_REMOTE:-}}"
+if [[ -z "$remote" ]]; then
+  echo 'Укажите адрес репозитория первым аргументом или в KIPOFOX_GIT_REMOTE' >&2
   exit 1
 fi
-export GIT_SSH_COMMAND="ssh -i \"$ssh_key\" -o IdentitiesOnly=yes"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 
@@ -16,7 +14,7 @@ git clone "$remote" "$temporary/repo"
 
 files=(
   .dockerignore .gitattributes .gitignore Dockerfile PROMPTS.md README.md
-  app.py compose.yaml highlights_to_fcp7xml.py render_preview.py
+  app.py compose.yaml highlights_to_fcp7xml.py render_preview.py install.sh
   requirements-desktop.txt transcribe_stream.py
 )
 for file in "${files[@]}"; do

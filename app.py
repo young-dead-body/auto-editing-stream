@@ -12,9 +12,11 @@ import re
 import subprocess
 import sys
 import threading
+import time
+import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 os.environ['PATH'] = os.pathsep.join([str(Path(sys.executable).parent), os.environ.get('PATH', '')])
@@ -26,6 +28,7 @@ CONFIG = DATA / 'project.json'
 COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review']
 job_lock = threading.Lock()
 job = {'status': 'idle', 'kind': '', 'error': ''}
+MAX_UPLOAD = 100 * 1024 ** 3
 
 
 def project():
@@ -36,6 +39,41 @@ def save_project(value):
     temporary = CONFIG.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(CONFIG)
+
+
+def transcript_metrics(p):
+    directory = Path(p.get('transcript_dir', '')) if p.get('transcript_dir') else None
+    result = {'completed_chunks': 0, 'total_chunks': 0, 'percent': 0,
+              'duration_seconds': 0, 'segments': 0, 'omitted_loops': 0,
+              'current_chunk': 0, 'stage': ''}
+    if not directory:
+        return result
+    progress = directory / 'progress.json'
+    if progress.is_file():
+        data = json.loads(progress.read_text(encoding='utf-8'))
+        result['duration_seconds'] = data.get('duration_seconds', 0)
+        result['total_chunks'] = data.get('total_chunks', 0)
+        result['current_chunk'] = data.get('current_chunk', 0)
+        result['stage'] = data.get('stage', '')
+        result['completed_chunks'] = len(list((directory / 'chunks').glob('chunk_*.json')))
+        if result['total_chunks']:
+            result['percent'] = min(100, round(100 * result['completed_chunks'] / result['total_chunks']))
+    transcript = directory / 'transcript_timestamps.json'
+    if transcript.is_file():
+        data = json.loads(transcript.read_text(encoding='utf-8'))
+        result['segments'] = len(data.get('segments', []))
+        result['omitted_loops'] = data.get('omitted_decoder_loops', 0)
+    return result
+
+
+def job_state():
+    with job_lock:
+        current = dict(job)
+    current['elapsed_seconds'] = round(current.get('finished_at', time.time()) - current['started_at']) if current.get('started_at') else 0
+    current['metrics'] = transcript_metrics(project())
+    log = DATA / 'job.log'
+    current['log'] = log.read_text(encoding='utf-8', errors='replace')[-12000:] if log.exists() else ''
+    return current
 
 
 def rows_for(path):
@@ -81,10 +119,12 @@ def run_job(kind, p):
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, text=True)
         with job_lock:
             job = {'status': 'done' if result.returncode == 0 else 'failed', 'kind': kind,
-                   'error': '' if result.returncode == 0 else f'Код завершения: {result.returncode}'}
+                   'error': '' if result.returncode == 0 else f'Код завершения: {result.returncode}',
+                   'started_at': job.get('started_at'), 'finished_at': time.time()}
     except Exception as exc:
         with job_lock:
-            job = {'status': 'failed', 'kind': kind, 'error': str(exc)}
+            job = {'status': 'failed', 'kind': kind, 'error': str(exc),
+                   'started_at': job.get('started_at'), 'finished_at': time.time()}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -118,15 +158,9 @@ class Handler(BaseHTTPRequestHandler):
                 segments = []
                 if transcript and transcript.is_file():
                     segments = json.loads(transcript.read_text(encoding='utf-8')).get('segments', [])
-                with job_lock:
-                    current_job = dict(job)
-                current_job['log'] = (DATA / 'job.log').read_text(encoding='utf-8', errors='replace')[-12000:] if (DATA / 'job.log').exists() else ''
-                self.reply({'project': p, 'rows': rows_for(p.get('highlights')), 'segments': segments, 'job': current_job})
+                self.reply({'project': p, 'rows': rows_for(p.get('highlights')), 'segments': segments, 'job': job_state()})
             elif path == '/api/job':
-                with job_lock:
-                    current_job = dict(job)
-                current_job['log'] = (DATA / 'job.log').read_text(encoding='utf-8', errors='replace')[-12000:] if (DATA / 'job.log').exists() else ''
-                self.reply(current_job)
+                self.reply(job_state())
             elif path == '/api/video':
                 p = project()
                 source = Path(p.get('source', ''))
@@ -160,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if urlparse(self.path).path == '/api/upload':
+                return self.upload_video()
             data = self.body()
             path = urlparse(self.path).path
             if path == '/api/project':
@@ -204,12 +240,50 @@ class Handler(BaseHTTPRequestHandler):
                 with job_lock:
                     if job['status'] == 'running':
                         raise ValueError('Другая операция ещё выполняется')
-                    job = {'status': 'running', 'kind': kind, 'error': ''}
+                    job = {'status': 'running', 'kind': kind, 'error': '', 'started_at': time.time()}
                 threading.Thread(target=run_job, args=(kind, p), daemon=True).start()
                 self.reply({'started': kind})
             else:
                 self.send_error(404)
         except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.reply({'error': str(exc)}, 400)
+
+    def upload_video(self):
+        temporary = None
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length <= 0 or length > MAX_UPLOAD:
+                raise ValueError('Размер видео должен быть от 1 байта до 100 ГБ')
+            with job_lock:
+                if job['status'] == 'running':
+                    raise ValueError('Дождитесь завершения текущей операции')
+            name = Path(parse_qs(urlparse(self.path).query).get('name', ['video.mp4'])[0]).name
+            if not re.search(r'\.(mp4|mkv|mov|webm|avi)$', name, re.I):
+                raise ValueError('Поддерживаются MP4, MKV, MOV, WebM и AVI')
+            upload_dir = DATA / 'uploads'
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            destination = upload_dir / f'{uuid.uuid4().hex}{Path(name).suffix.lower()}'
+            temporary = destination.with_suffix(destination.suffix + '.part')
+            with temporary.open('wb') as output:
+                remaining = length
+                while remaining:
+                    block = self.rfile.read(min(1024 * 1024, remaining))
+                    if not block:
+                        raise ValueError('Загрузка видео прервана')
+                    output.write(block)
+                    remaining -= len(block)
+            temporary.replace(destination)
+            previous = project()
+            p = {'source': str(destination), 'audio_stream': int(previous.get('audio_stream', 0)),
+                 'backend': previous.get('backend', 'auto'),
+                 'transcript_dir': str(DATA / 'transcripts' / destination.stem),
+                 'highlights': str(DATA / 'highlights' / f'{destination.stem}.csv'),
+                 'output_dir': str(DATA / 'output' / destination.stem)}
+            save_project(p)
+            self.reply({'project': p, 'name': name, 'size_bytes': length})
+        except (OSError, ValueError, TypeError) as exc:
+            if temporary:
+                temporary.unlink(missing_ok=True)
             self.reply({'error': str(exc)}, 400)
 
 

@@ -162,11 +162,17 @@ def main() -> int:
             raise SystemExit('Existing work-dir belongs to a different file/settings. Pick another --work-dir.')
     else:
         write_atomic(manifest, json.dumps(identity, ensure_ascii=False, indent=2))
+    progress_path = work / 'progress.json'
+    progress = {'duration_seconds': length, 'total_chunks': total, 'chunk_seconds': block,
+                'current_chunk': 0, 'stage': 'Подготовка'}
+    write_atomic(progress_path, json.dumps(progress, ensure_ascii=False))
     until = min(total, args.max_chunks) if args.max_chunks else total
     print(f'Source: {source}; duration: {stamp(length)}; chunks: {total}; processing through: {until}')
     whisper_model = None
 
     for idx in range(until):
+        progress.update(current_chunk=idx + 1, stage='Обработка аудио и распознавание')
+        write_atomic(progress_path, json.dumps(progress, ensure_ascii=False))
         name = f'chunk_{idx:04d}'
         out_json = chunks / (name + '.json')
         if out_json.exists():
@@ -210,6 +216,9 @@ def main() -> int:
         if not args.keep_audio:
             mp3.unlink(missing_ok=True)
 
+    progress['stage'] = 'Сборка транскрипта'
+    write_atomic(progress_path, json.dumps(progress, ensure_ascii=False))
+
     combined = []
     omitted_loops = 0
     for idx in range(total):
@@ -240,6 +249,8 @@ def main() -> int:
         print(f'Omitted {omitted_loops} obvious decoder-loop segments from combined transcript; raw chunks are preserved.')
     if done != total:
         print('This is a partial transcript. Run again without --max-chunks to complete.')
+    progress['stage'] = 'Готово' if done == total else 'Частично готово'
+    write_atomic(progress_path, json.dumps(progress, ensure_ascii=False))
     return 0
 
 
