@@ -1,4 +1,4 @@
-# Kipofox Studio
+# Stream Editor
 
 Локальный веб-интерфейс для транскрипции длинных записей, отбора хайлайтов и подготовки чернового монтажа в Adobe Premiere Pro.
 
@@ -18,13 +18,16 @@ python3.12 -m venv .venv
 
 Для MLX на Apple Silicon дополнительно установите `mlx-whisper` в то же окружение и выберите движок **MLX**. На Windows и Linux Faster Whisper работает на CPU. Для FFmpeg: `brew install ffmpeg` на macOS, `winget install Gyan.FFmpeg` на Windows или системный пакет `ffmpeg` на Linux.
 
-## Linux через Docker
+## Linux и macOS через Docker
+
+Для локальной сборки скопируйте [`.env.example`](.env.example) в `.env` и при необходимости измените порт. Docker Compose читает этот файл автоматически.
 
 ```bash
+cp .env.example .env
 docker compose up --build -d
 ```
 
-Откройте `http://127.0.0.1:8765`. Положите видео в `workspace/` и укажите путь внутри контейнера, например `/data/stream.mp4`. Результаты появятся в `workspace/kipofox/`. Порт доступен только с локального компьютера.
+Откройте `http://127.0.0.1:8765` (или порт из `.env`). Положите видео в `workspace/` и укажите путь внутри контейнера, например `/data/stream.mp4`. Результаты появятся в `workspace/stream-editor/`. Порт доступен только с локального компьютера. На macOS нужен Docker Desktop. Контейнер использует Faster Whisper на CPU; для MLX запускайте приложение непосредственно на macOS.
 
 ## Работа с проектом
 
@@ -47,7 +50,17 @@ python render_preview.py /path/to/video.mp4 /path/to/highlights.csv /path/to/pre
 
 ## Файлы релиза
 
-При создании тега `v*` или публикации Release для такого тега [GitHub Actions](.github/workflows/installers.yml) прикрепляет к релизу `KipofoxStudio.exe` для Windows и архивы `KipofoxStudio-Linux.tar.gz`, `KipofoxStudio-macOS.tar.gz`. В каждом архиве находятся скрипты, веб-интерфейс и `install.sh`. Распакуйте архив, установите FFmpeg, выполните `./install.sh`, затем `.venv/bin/python app.py`. Для Windows также нужен FFmpeg в `PATH`. Сборка Windows пока не подписана. Запуск workflow вручную сохраняет файлы как артефакты Actions без создания релиза.
+При создании тега `v*` или публикации Release для такого тега [GitHub Actions](.github/workflows/installers.yml) прикрепляет к релизу `StreamEditor.exe` для Windows и два контейнерных образа: `StreamEditor-Linux-amd64.docker.tar.gz` для Linux x86-64 и Mac с Intel, `StreamEditor-Linux-arm64.docker.tar.gz` для Linux ARM64 и Mac с Apple Silicon. Это Linux-контейнеры, запускаемые на macOS через Docker Desktop.
+
+Загрузите архив для архитектуры компьютера и запустите образ:
+
+```bash
+docker load -i StreamEditor-Linux-amd64.docker.tar.gz
+mkdir -p workspace
+docker run -d --name stream-editor -p 127.0.0.1:8765:8765 -v "$(pwd)/workspace:/data" stream-editor:release
+```
+
+На ARM64 замените имя архива на `StreamEditor-Linux-arm64.docker.tar.gz`. Откройте `http://127.0.0.1:8765`; файлы приложения сохраняются в `workspace/stream-editor/`. Для Windows нужен FFmpeg в `PATH`. Windows `.exe` пока не подписан. Ручной запуск workflow сохраняет файлы как артефакты Actions без создания релиза.
 
 ## Разработка и публикация
 
@@ -56,11 +69,11 @@ python -m unittest discover -s tests -v
 python -m py_compile app.py transcribe_stream.py highlights_to_fcp7xml.py render_preview.py
 ```
 
-Медиа, транскрипты, экспорты, локальный виртуальный Python и настройки исключены через `.gitignore`. В репозитории остаются исходный код, Docker-конфигурация, сборка установщиков, тесты и синтетический пример CSV. Перед публичным релизом выберите лицензию и проверьте собранные установщики на обеих платформах.
+Медиа, транскрипты, экспорты, локальный виртуальный Python и `.env` исключены через `.gitignore`; образец настроек хранится в [`.env.example`](.env.example). В репозитории остаются исходный код, Docker-конфигурация, сборка релиза, тесты и синтетический пример CSV.
 
 ### Публикация в репозиторий проекта
 
-Скрипт `scripts/publish.sh` принимает адрес целевого репозитория аргументом, копирует только файлы приложения, создаёт коммит и отправляет его обычным `git push`. Доступ к Git настраивается стандартными средствами Git и SSH. Локальные видео и результаты в публикацию не входят.
+Скрипт `scripts/publish.sh` принимает адрес целевого репозитория аргументом, копирует только файлы приложения, создаёт коммит и отправляет его обычным `git push`. Локальные видео и результаты в публикацию не входят.
 
 ```bash
 bash scripts/publish.sh <адрес-репозитория>

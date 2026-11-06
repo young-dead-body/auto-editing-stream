@@ -1,21 +1,21 @@
-#define AppName "Kipofox Studio"
+#define AppName "Stream Editor"
 #define AppVersion "0.1.0"
 [Setup]
 AppId={{B2191648-0F11-4E0A-9406-E89C5F031580}
 AppName={#AppName}
 AppVersion={#AppVersion}
-DefaultDirName={autopf}\Kipofox Studio
-DefaultGroupName=Kipofox Studio
+DefaultDirName={autopf}\Stream Editor
+DefaultGroupName=Stream Editor
 OutputDir=..\installer
-OutputBaseFilename=KipofoxStudio-Setup-Windows
+OutputBaseFilename=StreamEditor-Setup-Windows
 Compression=lzma
 SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 [Files]
-Source: "..\dist\KipofoxStudio.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\StreamEditor.exe"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
-Name: "{group}\Kipofox Studio"; Filename: "{app}\KipofoxStudio.exe"
-Name: "{autodesktop}\Kipofox Studio"; Filename: "{app}\KipofoxStudio.exe"
+Name: "{group}\Stream Editor"; Filename: "{app}\StreamEditor.exe"
+Name: "{autodesktop}\Stream Editor"; Filename: "{app}\StreamEditor.exe"
 [Run]
-Filename: "{app}\KipofoxStudio.exe"; Description: "Запустить Kipofox Studio"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\StreamEditor.exe"; Description: "Запустить Stream Editor"; Flags: nowait postinstall skipifsilent

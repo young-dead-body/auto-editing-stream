@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Chunked local transcription of long video/audio with ffmpeg + mlx_whisper.
 Usage: python transcribe_stream.py INPUT --work-dir WORKDIR [--audio-stream 0] [--max-chunks 1]
-Requires ffmpeg, ffprobe, mlx_whisper in PATH. No OpenAI API key.
+Requires ffmpeg and ffprobe in PATH; MLX mode also requires mlx_whisper.
 """
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ def stamp(seconds: float) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description='Transcribe long recordings in resumable segments')
     ap.add_argument('source', type=Path, help='Absolute path to original video/audio')
-    ap.add_argument('--work-dir', type=Path, default=Path.home() / 'KipofoxAI' / 'transcripts')
+    ap.add_argument('--work-dir', type=Path, default=Path.home() / 'StreamEditor' / 'transcripts')
     ap.add_argument('--audio-stream', type=int, default=0, help='Audio stream index among audio streams (0:a:N)')
     ap.add_argument('--chunk-minutes', type=int, default=30)
     ap.add_argument('--language', default='ru')

@@ -95,7 +95,7 @@ def build_xml(source: Path, clips: list[dict], metadata: dict, fps: int) -> ET.E
     audio_stream = next(x for x in metadata['streams'] if x['codec_type'] == 'audio')
     root = ET.Element('xmeml', version='4')
     sequence = node(root, 'sequence', id='sequence-1')
-    node(sequence, 'name', 'Kipofox highlights rough cut')
+    node(sequence, 'name', 'Highlights rough cut')
     node(sequence, 'duration', sum(x['end'] - x['start'] for x in clips))
     rate(sequence, fps)
     media = node(sequence, 'media')

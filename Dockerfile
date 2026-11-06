@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 KIPOFOX_DATA=/data/kipofox
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 STREAM_EDITOR_DATA=/data/stream-editor
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements-desktop.txt .

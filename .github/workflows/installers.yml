@@ -16,32 +16,37 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pyinstaller -r requirements-desktop.txt
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name KipofoxStudio --collect-all faster_whisper --collect-all ctranslate2 --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
       - uses: actions/upload-artifact@v4
         with:
-          name: KipofoxStudio-Windows
-          path: dist/KipofoxStudio.exe
+          name: StreamEditor-Windows
+          path: dist/StreamEditor.exe
           if-no-files-found: error
-  scripts:
+  container:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
-      - name: Pack Linux and macOS scripts
-        run: |
-          mkdir -p package/KipofoxStudio
-          cp app.py transcribe_stream.py highlights_to_fcp7xml.py render_preview.py requirements-desktop.txt install.sh README.md package/KipofoxStudio/
-          cp -R web package/KipofoxStudio/
-          chmod +x package/KipofoxStudio/install.sh
-          tar -C package -czf KipofoxStudio-Linux.tar.gz KipofoxStudio
-          tar -C package -czf KipofoxStudio-macOS.tar.gz KipofoxStudio
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Linux container
+        run: docker buildx build --platform linux/${{ matrix.arch }} --load --tag stream-editor:release .
+      - name: Check container startup
+        run: docker run --rm stream-editor:release python -c "import app; import faster_whisper"
+      - name: Save container image
+        shell: bash
+        run: docker save stream-editor:release | gzip > StreamEditor-Linux-${{ matrix.arch }}.docker.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: KipofoxStudio-Scripts
-          path: KipofoxStudio-*.tar.gz
+          name: StreamEditor-Linux-${{ matrix.arch }}
+          path: StreamEditor-Linux-${{ matrix.arch }}.docker.tar.gz
           if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, scripts]
+    needs: [windows, container]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,7 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release-files/KipofoxStudio.exe release-files/KipofoxStudio-Linux.tar.gz release-files/KipofoxStudio-macOS.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$GITHUB_REF_NAME" release-files/StreamEditor.exe release-files/StreamEditor-Linux-*.docker.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" release-files/KipofoxStudio.exe release-files/KipofoxStudio-Linux.tar.gz release-files/KipofoxStudio-macOS.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
+            gh release create "$GITHUB_REF_NAME" release-files/StreamEditor.exe release-files/StreamEditor-Linux-*.docker.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
           fi

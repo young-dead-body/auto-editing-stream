@@ -2,9 +2,9 @@
 set -euo pipefail
 
 source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-remote="${1:-${KIPOFOX_GIT_REMOTE:-}}"
+remote="${1:-${PUBLISH_GIT_REMOTE:-}}"
 if [[ -z "$remote" ]]; then
-  echo 'Укажите адрес репозитория первым аргументом или в KIPOFOX_GIT_REMOTE' >&2
+  echo 'Укажите адрес репозитория первым аргументом или в PUBLISH_GIT_REMOTE' >&2
   exit 1
 fi
 temporary="$(mktemp -d)"
@@ -13,7 +13,7 @@ trap 'rm -rf "$temporary"' EXIT
 git clone "$remote" "$temporary/repo"
 
 files=(
-  .dockerignore .gitattributes .gitignore Dockerfile PROMPTS.md README.md
+  .dockerignore .env.example .gitattributes .gitignore Dockerfile PROMPTS.md README.md
   app.py compose.yaml highlights_to_fcp7xml.py render_preview.py install.sh
   requirements-desktop.txt transcribe_stream.py
 )
@@ -32,5 +32,5 @@ if git -C "$temporary/repo" diff --cached --quiet; then
 fi
 
 git -C "$temporary/repo" diff --cached --stat
-git -C "$temporary/repo" commit -m 'Publish Kipofox Studio source'
+git -C "$temporary/repo" commit -m 'Publish Stream Editor source'
 git -C "$temporary/repo" push -u origin HEAD

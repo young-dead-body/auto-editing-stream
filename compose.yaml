@@ -1,10 +1,10 @@
 services:
-  kipofox:
+  stream-editor:
     build: .
     ports:
-      - "127.0.0.1:8765:8765"
+      - "127.0.0.1:${APP_PORT:-8765}:8765"
     volumes:
       - ./workspace:/data
     environment:
-      KIPOFOX_DATA: /data/kipofox
+      STREAM_EDITOR_DATA: /data/stream-editor
     restart: unless-stopped

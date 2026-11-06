@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-os.environ.setdefault('KIPOFOX_DATA', str(Path(tempfile.gettempdir()) / 'kipofox-tests'))
+os.environ.setdefault('STREAM_EDITOR_DATA', str(Path(tempfile.gettempdir()) / 'stream-editor-tests'))
 import app  # noqa: E402
 
 

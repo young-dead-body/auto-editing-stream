@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Kipofox web UI for transcription and rough-cut exports."""
+"""Local web UI for transcription and rough-cut exports."""
 from __future__ import annotations
 
 import argparse
@@ -22,7 +22,7 @@ BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 os.environ['PATH'] = os.pathsep.join([str(Path(sys.executable).parent), os.environ.get('PATH', '')])
 if sys.platform == 'darwin':
     os.environ['PATH'] = os.pathsep.join(['/opt/homebrew/bin', '/usr/local/bin', os.environ.get('PATH', '')])
-DATA = Path(os.environ.get('KIPOFOX_DATA', Path.home() / 'KipofoxAI' / 'web')).expanduser()
+DATA = Path(os.environ.get('STREAM_EDITOR_DATA', Path.home() / 'StreamEditor' / 'web')).expanduser()
 DATA.mkdir(parents=True, exist_ok=True)
 CONFIG = DATA / 'project.json'
 COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review']
@@ -303,7 +303,7 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f'http://127.0.0.1:{args.port}'
-    print(f'Kipofox: {url}', flush=True)
+    print(f'Stream Editor: {url}', flush=True)
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
