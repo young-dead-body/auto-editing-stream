@@ -133,7 +133,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$(Join-Path $PWD 'tools');$env:PATH"
-          python tests/visual_smoke.py *> windows-visual-smoke.log
+          python -X utf8 tests/visual_smoke.py *> windows-visual-smoke.log
           if ($LASTEXITCODE -ne 0) {
             Get-Content windows-visual-smoke.log
             throw 'Windows visual smoke failed'
