@@ -10,6 +10,8 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -80,6 +82,26 @@ jobs:
             Get-Content task-data\job.log -ErrorAction SilentlyContinue
             throw 'Packaged transcription startup failed'
           }
+      - name: Save Windows task diagnostics
+        if: failure() && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $report = @('Windows packaged task diagnostics', "Tag: $env:GITHUB_REF_NAME")
+          $report += 'Job log:'
+          $report += Get-Content task-data\job.log -ErrorAction SilentlyContinue
+          $report += 'Output files:'
+          $report += Get-ChildItem -Path test.mp4, highlights.csv, highlights.xml, task-data -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $report += 'Processes:'
+          $report += Get-CimInstance Win32_Process -Filter "name='StreamEditor.exe' or name='ffprobe.exe'" | Select-Object ProcessId,CommandLine | Out-String
+          $branch = "diagnostics/windows-$env:GITHUB_REF_NAME"
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git checkout --orphan $branch
+          git rm -r --cached . | Out-Null
+          Set-Content -Path windows-diagnostics.txt -Value $report
+          git add windows-diagnostics.txt
+          git commit -m 'Record packaged Windows task failure'
+          git push origin "HEAD:refs/heads/$branch"
       - uses: actions/upload-artifact@v4
         with:
           name: StreamEditor-Windows
