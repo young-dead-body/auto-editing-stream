@@ -131,6 +131,27 @@ class AppApiTest(unittest.TestCase):
         server.return_value.serve_forever.assert_called_once_with()
         server.return_value.server_close.assert_called_once_with()
 
+    def test_packaged_task_restores_log_streams(self):
+        log = self.root / 'task.log'
+        with mock.patch.dict(os.environ, {'STREAM_EDITOR_TASK_LOG': str(log)}), \
+             mock.patch.object(app.sys, 'argv', ['StreamEditor.exe', '--task', 'highlights_to_fcp7xml.py']), \
+             mock.patch.object(app.sys, 'stdout', None), \
+             mock.patch.object(app.sys, 'stderr', None), \
+             mock.patch('runpy.run_path') as run_path:
+            app.main()
+            self.assertIsNotNone(app.sys.stdout)
+            self.assertIs(app.sys.stdout, app.sys.stderr)
+            app.sys.stdout.write('task started\n')
+            app.sys.stdout.close()
+        run_path.assert_called_once()
+        self.assertEqual(log.read_text(encoding='utf-8'), 'task started\n')
+
+    def test_completed_job_reports_file_location(self):
+        app.save_project(self.project)
+        with mock.patch.object(app, 'job', {'status': 'done', 'kind': 'xml', 'error': ''}):
+            state = app.job_state()
+        self.assertEqual(state['output_path'], str(self.root / 'output' / 'highlights.xml'))
+
 
 if __name__ == '__main__':
     unittest.main()

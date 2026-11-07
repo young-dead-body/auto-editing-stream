@@ -60,7 +60,7 @@ mkdir -p workspace
 docker run -d --name stream-editor -p 127.0.0.1:8765:8765 -v "$(pwd)/workspace:/data" stream-editor:release
 ```
 
-На ARM64 замените имя архива на `StreamEditor-Linux-arm64.docker.tar.gz`. Откройте `http://127.0.0.1:8765`; файлы приложения сохраняются в `workspace/stream-editor/`. Для Windows нужен FFmpeg в `PATH`. Windows `.exe` пока не подписан. Ручной запуск workflow сохраняет файлы как артефакты Actions без создания релиза.
+На ARM64 замените имя архива на `StreamEditor-Linux-arm64.docker.tar.gz`. Откройте `http://127.0.0.1:8765`; файлы приложения сохраняются в `workspace/stream-editor/`. Windows `.exe` включает FFmpeg и FFprobe. По умолчанию загрузки, транскрипты, CSV, XML, превью, журнал и модели хранятся в `StreamEditor-data` рядом с `.exe`; путь к готовому файлу показывается в блоке «Выполнение». Для записи туда запускайте `.exe` из папки, доступной пользователю для записи. Windows `.exe` пока не подписан. Ручной запуск workflow сохраняет файлы как артефакты Actions без создания релиза.
 
 ## Разработка и публикация
 

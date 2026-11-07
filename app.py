@@ -19,11 +19,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
-os.environ['PATH'] = os.pathsep.join([str(Path(sys.executable).parent), os.environ.get('PATH', '')])
+EXE_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+os.environ['PATH'] = os.pathsep.join([str(BASE), str(EXE_DIR), os.environ.get('PATH', '')])
 if sys.platform == 'darwin':
     os.environ['PATH'] = os.pathsep.join(['/opt/homebrew/bin', '/usr/local/bin', os.environ.get('PATH', '')])
-DATA = Path(os.environ.get('STREAM_EDITOR_DATA', Path.home() / 'StreamEditor' / 'web')).expanduser()
+DATA = Path(os.environ.get('STREAM_EDITOR_DATA', EXE_DIR / 'StreamEditor-data' if getattr(sys, 'frozen', False)
+                           else Path.home() / 'StreamEditor' / 'web')).expanduser()
 DATA.mkdir(parents=True, exist_ok=True)
+if getattr(sys, 'frozen', False):
+    os.environ.setdefault('HF_HOME', str(DATA / 'models'))
 CONFIG = DATA / 'project.json'
 COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review']
 job_lock = threading.Lock()
@@ -70,7 +74,14 @@ def job_state():
     with job_lock:
         current = dict(job)
     current['elapsed_seconds'] = round(current.get('finished_at', time.time()) - current['started_at']) if current.get('started_at') else 0
-    current['metrics'] = transcript_metrics(project())
+    p = project()
+    current['metrics'] = transcript_metrics(p)
+    if current['status'] == 'done':
+        kind = current.get('kind')
+        if kind == 'transcribe' and p.get('transcript_dir'):
+            current['output_path'] = str(Path(p['transcript_dir']) / 'transcript_timestamps.txt')
+        elif kind in ('xml', 'preview') and p.get('output_dir'):
+            current['output_path'] = str(Path(p['output_dir']) / ('highlights.xml' if kind == 'xml' else 'preview.mp4'))
     log = DATA / 'job.log'
     current['log'] = log.read_text(encoding='utf-8', errors='replace')[-12000:] if log.exists() else ''
     return current
@@ -293,6 +304,13 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == '--task':
+        if sys.stdout is None or sys.stderr is None:
+            task_log = Path(os.environ.get('STREAM_EDITOR_TASK_LOG', DATA / 'job.log'))
+            stream = task_log.open('a', encoding='utf-8', buffering=1)
+            if sys.stdout is None:
+                sys.stdout = stream
+            if sys.stderr is None:
+                sys.stderr = stream
         import runpy
         script = BASE / sys.argv[2]
         if script.name not in ('transcribe_stream.py', 'highlights_to_fcp7xml.py', 'render_preview.py'):

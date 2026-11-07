@@ -16,7 +16,18 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pyinstaller -r requirements-desktop.txt
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
+      - name: Download FFmpeg for the portable executable
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          New-Item -ItemType Directory -Path tools | Out-Null
+          foreach ($name in @('ffmpeg.exe', 'ffprobe.exe')) {
+            $binary = Get-ChildItem ffmpeg -Recurse -Filter $name | Select-Object -First 1
+            if (-not $binary) { throw "$name missing from FFmpeg archive" }
+            Copy-Item $binary.FullName "tools/$name"
+          }
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --add-binary "tools/ffmpeg.exe;." --add-binary "tools/ffprobe.exe;." --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
       - name: Check Windows executable serves the page
         shell: pwsh
         run: |
@@ -37,6 +48,24 @@ jobs:
             if (-not $ready) { throw 'StreamEditor.exe did not serve the page within 90 seconds' }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+      - name: Check packaged XML export and transcription startup
+        shell: pwsh
+        run: |
+          & .\tools\ffmpeg.exe -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=25 -f lavfi -i sine=frequency=440 -t 3 -c:v mpeg4 -c:a aac -ac 2 test.mp4
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create test video' }
+          Set-Content -Path highlights.csv -Value @('start,end', '00:00:00,00:00:01')
+          $env:STREAM_EDITOR_DATA = Join-Path $PWD 'task-data'
+          $xml = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'highlights_to_fcp7xml.py', 'test.mp4', 'highlights.csv', 'highlights.xml') -Wait -PassThru
+          if ($xml.ExitCode -ne 0 -or -not (Test-Path highlights.xml)) {
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged XML export failed'
+          }
+          Remove-Item task-data\job.log
+          $transcribe = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'transcribe_stream.py', 'test.mp4', '--work-dir', 'task-data\transcript', '--audio-stream', '1') -Wait -PassThru
+          if ($transcribe.ExitCode -ne 2 -or -not ((Get-Content task-data\job.log -Raw) -match 'Audio stream 1 does not exist')) {
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged transcription startup failed'
           }
       - uses: actions/upload-artifact@v4
         with:
