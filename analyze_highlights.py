@@ -37,7 +37,8 @@ def stamp(value):
 
 
 def audio_energy(source, stream):
-    """Decode low rate mono audio into one RMS value per second."""
+    """Decode audio into per-second loudness and frequency vectors."""
+    import numpy as np
     with tempfile.TemporaryDirectory() as directory:
         audio = Path(directory) / 'audio.wav'
         subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', str(source),
@@ -45,15 +46,45 @@ def audio_energy(source, stream):
         with wave.open(str(audio), 'rb') as stream_file:
             rate = stream_file.getframerate()
             energies = []
-            import audioop
             while block := stream_file.readframes(rate):
-                energies.append(audioop.rms(block, 2) / 32768)
+                samples = np.frombuffer(block, dtype='<i2').astype(np.float32) / 32768
+                if not len(samples):
+                    continue
+                rms = float(np.sqrt(np.mean(samples * samples)))
+                spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples)))) ** 2
+                frequencies = np.fft.rfftfreq(len(samples), 1 / rate)
+                bands = [float(np.sum(spectrum[(frequencies >= low) & (frequencies < high)]))
+                         for low, high in ((0, 250), (250, 1000), (1000, 3000), (3000, rate / 2 + 1))]
+                total = sum(bands)
+                energies.append((rms, tuple(value / total for value in bands) if total else (0, 0, 0, 0)))
     return energies
+
+
+def audio_events(energies):
+    """Find short changes relative to the nearby audio, not absolute volume."""
+    if not energies:
+        return []
+    volumes = [value[0] if isinstance(value, (tuple, list)) else value for value in energies]
+    global_median = sorted(volumes)[len(volumes) // 2]
+    events = []
+    for idx, value in enumerate(energies):
+        earlier = volumes[max(0, idx - 30):idx]
+        local = sorted(earlier)[len(earlier) // 2] if earlier else global_median
+        rise = max(0, 20 * math.log10(max(volumes[idx], .0001) / max(local, .0001)))
+        if isinstance(value, (tuple, list)) and earlier:
+            previous = [item[1] for item in energies[max(0, idx - 30):idx]]
+            mean = [sum(band[k] for band in previous) / len(previous) for k in range(4)]
+            similarity = cosine(dict(enumerate(value[1])), dict(enumerate(mean)))
+            change = max(0, 1 - similarity)
+            events.append(min(3, rise / 7) + min(2, change * 8))
+        else:
+            events.append(min(3, rise / 7))
+    return events
 
 
 def candidates(segments, energies, duration):
     valid = sorted((s for s in segments if s.get('text') and float(s['end']) > float(s['start'])), key=lambda s: float(s['start']))
-    baseline = sorted(energies)[len(energies) // 2] if energies else 0
+    events = audio_events(energies)
     proposed = []
     starts = [float(s['start']) for s in valid]
     for center in range(0, math.ceil(duration), 20):
@@ -71,20 +102,30 @@ def candidates(segments, energies, duration):
         cue = len(CUES.findall(words))
         excitement = min(2, words.count('!'))
         spoken = sum(max(0, min(end, float(s['end'])) - max(start, float(s['start']))) for s in nearby)
-        selected = energies[int(start):max(int(start) + 1, int(end))]
-        peak = max(selected, default=0)
-        increase_db = 20 * math.log10(max(peak, .0001) / max(baseline, .0001)) if energies else 0
-        energy = min(2, max(0, increase_db / 6))
+        energy = max(events[int(start):max(int(start) + 1, int(end))], default=0)
         score = cue * 2 + excitement + min(3, spoken / 10) + energy + novelty
-        if (score < 3 if valid else energy < 1.5):
+        if valid and (score < 3 or (not cue and not excitement and novelty < .5 and energy < 1.5)):
+            continue
+        if not valid and energy < 1.5:
             continue
         reason = []
         if cue: reason.append('эмоциональная речь')
         if excitement: reason.append('восклицание')
-        if energy >= 1.5: reason.append('всплеск громкости')
+        if energy >= 1.5: reason.append('изменение звука')
         if novelty >= .7: reason.append('новая тема речи')
         if not reason: reason.append('плотная речь' if valid else 'изменение звука')
-        proposed.append((score, start, end, ', '.join(reason)))
+        focus = next((s for s in nearby if CUES.search(str(s['text']))), None)
+        if focus is None:
+            focus = next((s for s in nearby if '!' in str(s['text'])), None)
+        if focus is not None:
+            anchor = (float(focus['start']) + float(focus['end'])) / 2
+        elif events and energy >= 1.5:
+            indices = range(int(start), min(len(events), math.ceil(end)))
+            anchor = max(indices, key=events.__getitem__) if indices else (start + end) / 2
+        else:
+            anchor = (start + end) / 2
+        clip_start, clip_end = max(0, anchor - 8), min(duration, anchor + 22)
+        proposed.append((score, clip_start, clip_end, ', '.join(reason)))
     chosen = []
     for score, start, end, reason in sorted(proposed, reverse=True):
         if len(chosen) >= max(3, math.ceil(duration / 3600) * 12):
@@ -108,6 +149,7 @@ def model_review(source, picks, audio_stream):
         if not gpu:
             raise
         print('CUDA недоступна при углублённом анализе; продолжение на CPU', flush=True)
+        gpu = False
         model = WhisperModel(model_name, device='cpu', compute_type='int8')
     reviewed = []
     with tempfile.TemporaryDirectory() as directory:
@@ -116,8 +158,17 @@ def model_review(source, picks, audio_stream):
             subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
                             '-ss', str(start), '-i', str(source), '-t', str(end - start),
                             '-map', f'0:a:{audio_stream}', '-vn', '-ac', '1', '-ar', '16000', str(audio)], check=True)
-            speech, _ = model.transcribe(str(audio), condition_on_previous_text=False)
-            words = ' '.join(piece.text for piece in speech).strip()
+            try:
+                speech, _ = model.transcribe(str(audio), condition_on_previous_text=False)
+                words = ' '.join(piece.text for piece in speech).strip()
+            except (RuntimeError, OSError) as exc:
+                if not gpu:
+                    raise
+                print(f'CUDA недоступна при проверке речи ({exc}); продолжение на CPU', flush=True)
+                gpu = False
+                model = WhisperModel(model_name, device='cpu', compute_type='int8')
+                speech, _ = model.transcribe(str(audio), condition_on_previous_text=False)
+                words = ' '.join(piece.text for piece in speech).strip()
             count = len(words.split())
             cues = len(CUES.findall(words))
             score += min(3, cues * 1.5) + min(1, count / 25)
@@ -159,7 +210,7 @@ def analyze(source, transcript, output, audio_stream=0, deep=False):
     output.with_suffix('.visual-progress.json').unlink(missing_ok=True)
     stats = {'count': len(picks), 'duration_seconds': sum(end - start for _, start, end, _ in picks),
              'source_duration_seconds': duration,
-             'method': ('речь, речевой вектор и громкость' if segments else 'всплески громкости') +
+             'method': ('речь, речевой вектор и звуковые признаки' if segments else 'звуковые признаки') +
                        (f'; проверка Whisper {reviewed_model}' if reviewed_model else ''),
              'csv': str(output)}
     output.with_suffix('.stats.json').write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding='utf-8')

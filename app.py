@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -37,6 +38,9 @@ CONFIG = DATA / 'project.json'
 COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review', 'relevance']
 job_lock = threading.Lock()
 job = {'status': 'idle', 'kind': '', 'error': ''}
+job_process = None
+server_instance = None
+shutting_down = False
 MAX_UPLOAD = 100 * 1024 ** 3
 
 
@@ -166,7 +170,7 @@ def command_for(kind, p):
 
 
 def run_job(kind, p):
-    global job
+    global job, job_process
     log_path = DATA / 'job.log'
     try:
         script, arguments = command_for(kind, p)
@@ -175,15 +179,47 @@ def run_job(kind, p):
         else:
             command = [sys.executable, str(BASE / script), *arguments]
         with log_path.open('w', encoding='utf-8') as log:
-            result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, text=True)
+            with job_lock:
+                if shutting_down:
+                    return
+                job_process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                               creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+                                               start_new_session=os.name != 'nt')
+            result = job_process.wait()
         with job_lock:
-            job = {'status': 'done' if result.returncode == 0 else 'failed', 'kind': kind,
-                   'error': '' if result.returncode == 0 else f'Код завершения: {result.returncode}',
+            job_process = None
+            job = {'status': 'stopped' if shutting_down else 'done' if result == 0 else 'failed', 'kind': kind,
+                   'error': 'Приложение остановлено' if shutting_down else '' if result == 0 else f'Код завершения: {result}',
                    'started_at': job.get('started_at'), 'finished_at': time.time()}
     except Exception as exc:
         with job_lock:
+            job_process = None
             job = {'status': 'failed', 'kind': kind, 'error': str(exc),
                    'started_at': job.get('started_at'), 'finished_at': time.time()}
+
+
+def stop_process(process):
+    if process is None or process.poll() is not None:
+        return
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                       capture_output=True, check=False)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
+def stop_application():
+    global shutting_down
+    with job_lock:
+        shutting_down = True
+        process = job_process
+        server = server_instance
+    stop_process(process)
+    if server is not None:
+        server.shutdown()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -362,11 +398,16 @@ class Handler(BaseHTTPRequestHandler):
                 kind = data.get('kind')
                 command_for(kind, p)
                 with job_lock:
+                    if shutting_down:
+                        raise ValueError('Приложение завершает работу')
                     if job['status'] == 'running':
                         raise ValueError('Другая операция ещё выполняется')
                     job = {'status': 'running', 'kind': kind, 'error': '', 'started_at': time.time()}
                 threading.Thread(target=run_job, args=(kind, p), daemon=True).start()
                 self.reply({'started': kind})
+            elif path == '/api/shutdown':
+                self.reply({'stopping': True})
+                threading.Thread(target=stop_application, daemon=True).start()
             else:
                 self.send_error(404)
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -412,6 +453,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global server_instance, shutting_down
     if len(sys.argv) > 2 and sys.argv[1] == '--task':
         if sys.stdout is None or sys.stderr is None:
             task_log = Path(os.environ.get('STREAM_EDITOR_TASK_LOG', DATA / 'job.log'))
@@ -434,6 +476,8 @@ def main():
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server_instance = server
+    shutting_down = False
     url = f'http://127.0.0.1:{args.port}'
     if sys.stdout is not None:
         print(f'Stream Editor: {url}', flush=True)
@@ -444,7 +488,11 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        with job_lock:
+            process = job_process
+        stop_process(process)
         server.server_close()
+        server_instance = None
 
 
 if __name__ == '__main__':

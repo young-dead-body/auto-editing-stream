@@ -46,6 +46,9 @@ class AppApiTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         app.DATA = self.root
         app.CONFIG = self.root / 'project.json'
+        app.shutting_down = False
+        app.server_instance = None
+        app.job_process = None
         self.source = self.root / 'stream.mp4'
         self.source.write_bytes(b'video fixture')
         self.project = {
@@ -136,6 +139,25 @@ class AppApiTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_shutdown_endpoint_stops_server(self):
+        from urllib.request import Request
+        server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
+        app.server_instance = server
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = Request(f'http://127.0.0.1:{server.server_port}/api/shutdown',
+                              data=b'{}', headers={'Content-Type': 'application/json'})
+            with urlopen(request, timeout=5) as response:
+                self.assertTrue(json.load(response)['stopping'])
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertTrue(app.shutting_down)
+        finally:
+            server.shutdown()
+            server.server_close()
+            app.server_instance = None
 
     def test_startup_without_console_output(self):
         with mock.patch.object(app.sys, 'argv', ['app.py', '--no-browser', '--port', '0']), \

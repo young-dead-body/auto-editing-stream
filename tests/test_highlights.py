@@ -21,6 +21,14 @@ class HighlightTest(unittest.TestCase):
         picks = analyze_highlights.candidates([], energy, 120)
         self.assertTrue(picks)
         self.assertTrue(any(start <= 50 <= end for _, start, end, _ in picks))
+        self.assertTrue(all(end - start <= 30 for _, start, end, _ in picks))
+
+    def test_audio_vectors_detect_change_without_rewarding_constant_loudness(self):
+        stable = [(0.7, (0.8, 0.1, 0.1, 0.0))] * 100
+        changed = stable[:50] + [(0.7, (0.0, 0.1, 0.1, 0.8))] + stable[51:]
+        self.assertEqual(analyze_highlights.candidates([], stable, 100), [])
+        self.assertTrue(any(start <= 50 <= end for _, start, end, _ in
+                            analyze_highlights.candidates([], changed, 100)))
 
     def test_speech_vector_and_transcript_candidate(self):
         self.assertLess(analyze_highlights.cosine(

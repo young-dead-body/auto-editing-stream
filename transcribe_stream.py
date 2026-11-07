@@ -107,6 +107,64 @@ def stamp(seconds: float) -> str:
     return f'{h:02d}:{m:02d}:{s:02d}'
 
 
+def combine_chunks(work: Path, source: Path, total: int, block: int) -> tuple[int, int]:
+    """Publish all finished chunks after each step, including resumed runs."""
+    chunks = work / 'chunks'
+    combined = []
+    omitted_loops = 0
+    done = 0
+    for idx in range(total):
+        item = chunks / f'chunk_{idx:04d}.json'
+        if not item.exists():
+            continue
+        try:
+            piece, removed = remove_decoder_loops(read_segments(item))
+        except (ValueError, KeyError, TypeError, OSError):
+            continue
+        done += 1
+        omitted_loops += removed
+        for seg in piece:
+            msg = str(seg.get('text', '')).strip()
+            if msg:
+                combined.append({'start': round(float(seg['start']) + idx * block, 3),
+                                 'end': round(float(seg['end']) + idx * block, 3),
+                                 'text': msg, 'chunk_index': idx})
+    combined.sort(key=lambda x: (x['start'], x['end']))
+    write_atomic(work / 'transcript_timestamps.json',
+                 json.dumps({'source': str(source), 'complete': done == total,
+                             'omitted_decoder_loops': omitted_loops, 'segments': combined},
+                            ensure_ascii=False, indent=2))
+    write_atomic(work / 'transcript_timestamps.txt',
+                 ''.join(f"[{stamp(item['start'])}–{stamp(item['end'])}] {item['text']}\n" for item in combined))
+    return done, omitted_loops
+
+
+def transcribe_faster(model, audio: Path, language: str, previous_text: bool) -> list[dict]:
+    segments, _ = model.transcribe(str(audio), language=language,
+                                  condition_on_previous_text=previous_text)
+    # faster-whisper performs GPU inference while the generator is consumed.
+    return [{'start': segment.start, 'end': segment.end, 'text': segment.text}
+            for segment in segments]
+
+
+def recognize_with_fallback(model_factory, model_name: str, model, device: str,
+                            compute_type: str, audio: Path, language: str,
+                            previous_text: bool):
+    """Retry the whole chunk on CPU if CUDA fails during loading or inference."""
+    try:
+        if model is None:
+            model = model_factory(model_name, device=device, compute_type=compute_type)
+        recognized = transcribe_faster(model, audio, language, previous_text)
+    except (RuntimeError, OSError) as exc:
+        if device != 'cuda':
+            raise
+        print(f'CUDA недоступна ({exc}); продолжение на CPU', flush=True)
+        device = 'cpu'
+        model = model_factory(model_name, device='cpu', compute_type='int8')
+        recognized = transcribe_faster(model, audio, language, previous_text)
+    return model, device, recognized
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description='Transcribe long recordings in resumable segments')
     ap.add_argument('source', type=Path, help='Absolute path to original video/audio')
@@ -173,6 +231,7 @@ def main() -> int:
     until = min(total, args.max_chunks) if args.max_chunks else total
     print(f'Source: {source}; duration: {stamp(length)}; chunks: {total}; processing through: {until}')
     whisper_model = None
+    done, omitted_loops = combine_chunks(work, source, total, block)
 
     for idx in range(until):
         progress.update(current_chunk=idx + 1, stage='Обработка аудио и распознавание')
@@ -207,53 +266,21 @@ def main() -> int:
                  '-f', 'json', '-o', str(chunks), '--output-name', name])
         else:
             from faster_whisper import WhisperModel
-            if whisper_model is None:
-                try:
-                    whisper_model = WhisperModel(args.model, device=whisper_device, compute_type=compute_type)
-                except (RuntimeError, OSError) as exc:
-                    if whisper_device != 'cuda':
-                        raise
-                    print(f'CUDA недоступна ({exc}); продолжение на CPU', flush=True)
-                    whisper_model = WhisperModel(args.model, device='cpu', compute_type='int8')
-            segments, _ = whisper_model.transcribe(str(mp3), language=args.language,
-                condition_on_previous_text=args.condition_on_previous_text == 'True')
-            write_atomic(out_json, json.dumps({'segments': [
-                {'start': segment.start, 'end': segment.end, 'text': segment.text}
-                for segment in segments]}, ensure_ascii=False))
+            whisper_model, whisper_device, recognized = recognize_with_fallback(
+                WhisperModel, args.model, whisper_model, whisper_device, compute_type,
+                mp3, args.language, args.condition_on_previous_text == 'True')
+            write_atomic(out_json, json.dumps({'segments': recognized}, ensure_ascii=False))
         if not out_json.exists():
             raise RuntimeError(f'Whisper did not create {out_json}. Check CLI logs.')
         read_segments(out_json)
+        done, omitted_loops = combine_chunks(work, source, total, block)
         if not args.keep_audio:
             mp3.unlink(missing_ok=True)
 
     progress['stage'] = 'Сборка транскрипта'
     write_atomic(progress_path, json.dumps(progress, ensure_ascii=False))
 
-    combined = []
-    omitted_loops = 0
-    for idx in range(total):
-        item = chunks / f'chunk_{idx:04d}.json'
-        if not item.exists():
-            continue
-        piece, removed = remove_decoder_loops(read_segments(item))
-        omitted_loops += removed
-        offset = idx * block
-        for seg in piece:
-            msg = str(seg.get('text', '')).strip()
-            if not msg:
-                continue
-            combined.append({
-                'start': round(float(seg.get('start', 0)) + offset, 3),
-                'end': round(float(seg.get('end', 0)) + offset, 3),
-                'text': msg, 'chunk_index': idx
-            })
-    combined.sort(key=lambda x: (x['start'], x['end']))
-    write_atomic(work / 'transcript_timestamps.json',
-                 json.dumps({'source': str(source), 'complete': all((chunks / f'chunk_{idx:04d}.json').exists() for idx in range(total)),
-                    'omitted_decoder_loops': omitted_loops, 'segments': combined}, ensure_ascii=False, indent=2))
-    write_atomic(work / 'transcript_timestamps.txt',
-                 ''.join(f"[{stamp(item['start'])}–{stamp(item['end'])}] {item['text']}\n" for item in combined))
-    done = sum((chunks / f'chunk_{idx:04d}.json').exists() for idx in range(total))
+    done, omitted_loops = combine_chunks(work, source, total, block)
     print(f'Completed {done}/{total}. Read: {work / "transcript_timestamps.txt"}')
     if omitted_loops:
         print(f'Omitted {omitted_loops} obvious decoder-loop segments from combined transcript; raw chunks are preserved.')

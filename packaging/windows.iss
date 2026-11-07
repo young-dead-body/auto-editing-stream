@@ -1,5 +1,5 @@
 #define AppName "Stream Editor"
-#define AppVersion "0.1.0"
+#define AppVersion "0.1.7"
 [Setup]
 AppId={{B2191648-0F11-4E0A-9406-E89C5F031580}
 AppName={#AppName}
