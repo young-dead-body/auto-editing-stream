@@ -133,7 +133,12 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$(Join-Path $PWD 'tools');$env:PATH"
-          python tests/visual_smoke.py
+          python tests/visual_smoke.py *> windows-visual-smoke.log
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content windows-visual-smoke.log
+            throw 'Windows visual smoke failed'
+          }
+          Get-Content windows-visual-smoke.log
       - name: Save Windows task diagnostics
         if: failure() && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -141,6 +146,8 @@ jobs:
           $report = @('Windows packaged task diagnostics', "Tag: $env:GITHUB_REF_NAME")
           $report += 'Job log:'
           $report += Get-Content task-data\job.log -ErrorAction SilentlyContinue
+          $report += 'Visual smoke log:'
+          $report += Get-Content windows-visual-smoke.log -ErrorAction SilentlyContinue
           $report += 'Output files:'
           $report += Get-ChildItem -Path test.mp4, highlights.csv, highlights.xml, task-data -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
           $report += 'Processes:'
