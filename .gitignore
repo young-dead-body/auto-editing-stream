@@ -18,6 +18,7 @@ premiere/
 handoff/
 workspace/
 StreamEditor-data/
+docs/
 *.visual.json
 *.visual-progress.json
 *.visual-frames/

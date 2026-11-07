@@ -21,12 +21,13 @@ files=(
 for file in "${files[@]}"; do
   cp "$source_root/$file" "$temporary/repo/$file"
 done
-for folder in .github docs examples packaging tests web scripts; do
+for folder in .github examples packaging tests web scripts; do
   mkdir -p "$temporary/repo/$folder"
   cp -R "$source_root/$folder/." "$temporary/repo/$folder/"
 done
 
-git -C "$temporary/repo" add -- "${files[@]}" .github docs examples packaging tests web scripts
+git -C "$temporary/repo" rm -r --ignore-unmatch docs
+git -C "$temporary/repo" add -- "${files[@]}" .github examples packaging tests web scripts
 if git -C "$temporary/repo" diff --cached --quiet; then
   echo 'В репозитории уже актуальные файлы.'
   exit 0

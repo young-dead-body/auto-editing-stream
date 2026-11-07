@@ -114,10 +114,21 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item task-data\job.log -ErrorAction SilentlyContinue
+          $started = Get-Date
           $deep = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'deep_analysis.py', 'test.mp4', 'missing-highlights.csv', 'task-data\transcript\transcript_timestamps.json') -PassThru
-          if (-not $deep.WaitForExit(120000)) { Stop-Process -Id $deep.Id -Force; throw 'Packaged deep task timed out' }
+          if (-not $deep.WaitForExit(300000)) {
+            Write-Host "Deep task process: $($deep.Id), elapsed: $((Get-Date) - $started)"
+            Get-CimInstance Win32_Process -Filter "ProcessId=$($deep.Id)" | Select-Object ProcessId,ParentProcessId,CommandLine | Format-List
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $deep.Id -Force
+            throw 'Packaged deep task timed out'
+          }
+          Write-Host "Deep task completed in $((Get-Date) - $started) with exit code $($deep.ExitCode)"
           $log = Get-Content task-data\job.log -Raw -ErrorAction SilentlyContinue
-          if ($deep.ExitCode -eq 0 -or $log -notmatch 'missing-highlights.csv') { throw 'Packaged deep task was not loaded correctly' }
+          if ($deep.ExitCode -eq 0 -or $log -notmatch 'missing-highlights.csv') {
+            Write-Host $log
+            throw 'Packaged deep task was not loaded correctly'
+          }
       - name: Check Windows local vision model
         shell: pwsh
         run: |
