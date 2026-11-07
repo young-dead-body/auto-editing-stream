@@ -18,6 +18,10 @@ premiere/
 handoff/
 workspace/
 StreamEditor-data/
+*.visual.json
+*.visual-progress.json
+*.visual-frames/
+*.stats.json
 LOCAL_GUIDE.md
 *.prproj
 

@@ -1,8 +1,8 @@
 # Stream Editor
 
-Локальный веб-интерфейс для транскрипции длинных записей, отбора хайлайтов и подготовки чернового монтажа в Adobe Premiere Pro.
+Локальный веб-интерфейс для транскрипции длинных записей, автоматического поиска интересных моментов, нарезки клипов и подготовки чернового монтажа в Adobe Premiere Pro.
 
-Приложение показывает видео и транскрипт с таймкодами, позволяет редактировать CSV с моментами, экспортирует FCP7 XML и создаёт обзорный MP4. Исходное видео остаётся на компьютере пользователя. Для транскрипции используются MLX Whisper на Mac с Apple Silicon или Faster Whisper на CPU. Модель загружается при первом запуске. OpenAI API не требуется.
+Приложение показывает видео и транскрипт с таймкодами, предлагает фрагменты по речи и всплескам громкости, позволяет редактировать CSV, нарезает отдельные MP4, экспортирует FCP7 XML и создаёт обзорный MP4. Исходное видео остаётся на компьютере пользователя. Для транскрипции используются MLX Whisper на Mac с Apple Silicon или Faster Whisper на NVIDIA GPU при доступной CUDA; в остальных случаях работает CPU. Автоматический профиль выбирает модель с учётом доступной памяти. Модель загружается при первом запуске. OpenAI API не требуется.
 
 ## Быстрый запуск
 
@@ -16,7 +16,7 @@ python3.12 -m venv .venv
 
 На Windows используйте `.venv\Scripts\python.exe` вместо `.venv/bin/python`. Откройте `http://127.0.0.1:8765`, если браузер не открылся сам.
 
-Для MLX на Apple Silicon дополнительно установите `mlx-whisper` в то же окружение и выберите движок **MLX**. На Windows и Linux Faster Whisper работает на CPU. Для FFmpeg: `brew install ffmpeg` на macOS, `winget install Gyan.FFmpeg` на Windows или системный пакет `ffmpeg` на Linux.
+Для MLX на Apple Silicon дополнительно установите `mlx-whisper` в то же окружение и выберите движок **MLX**. На Windows и Linux Faster Whisper использует доступную NVIDIA GPU с поддержкой CUDA либо CPU. В сборке должны присутствовать совместимые библиотеки CUDA/cuDNN; при невозможности запуска на GPU приложение продолжит на CPU. Для FFmpeg: `brew install ffmpeg` на macOS, `winget install Gyan.FFmpeg` на Windows или системный пакет `ffmpeg` на Linux.
 
 ## Linux и macOS через Docker
 
@@ -33,15 +33,18 @@ docker compose up --build -d
 
 1. Загрузите видео через браузер. При необходимости настройте аудиодорожку и движок транскрипции, затем сохраните проект. Можно также указать абсолютный путь к видео на том же компьютере.
 2. Запустите транскрипцию. Повторный запуск продолжает готовые части. Для другого исходника выберите новую папку транскрипта.
-3. Добавьте моменты или укажите существующий CSV с колонками `start,end,category,score,reason,needs_video_review`. Таймкоды: `HH:MM:SS`.
-4. Экспортируйте XML для Premiere или обзорный MP4. Проверьте монтаж и синхронизацию в Premiere перед публикацией.
+3. Нажмите «Быстрый поиск». Затем нажмите «Углубить анализ моделью»: локальный Whisper повторно проверит звук, а SmolVLM2 оценит выбранные кадры каждого момента. Модели и llama.cpp скачиваются при первом использовании; после этого работают локально. До транскрипции доступны кандидаты по всплескам громкости; после транскрипции учитываются также речевые признаки и частотный вектор слов. При необходимости поправьте моменты или укажите существующий CSV с колонками `start,end,category,score,reason,needs_video_review`. Таймкоды: `HH:MM:SS`.
+4. Нажмите «Нарезать клипы MP4», чтобы получить отдельные файлы в папке `output/clips/`, либо экспортируйте XML для Premiere или обзорный MP4. Проверьте монтаж и синхронизацию в Premiere перед публикацией.
 
-Интерфейс не выбирает хайлайты автоматически: решения по содержанию и проверка видеоряда остаются за редактором. Черновой XML использует номинальную частоту кадров, поэтому для исходников с переменным FPS нужно проверить границы и звук.
+Автоматический отбор предлагает кандидатов на основе звука и текста; он не определяет, кто именно говорит, и не понимает видеоряд. Все кандидаты помечаются для ручной проверки. Углублённая проверка использует Whisper и локальную видеомодель SmolVLM2. Оценка релевантности 0–100 и просмотр кадров доступны в таблице. Это рекомендация редактору, а не измеренная вероятность успешного клипа. Подробная спецификация, форматы файлов и ограничения: [docs/VISUAL_ANALYSIS.md](docs/VISUAL_ANALYSIS.md). Журнал реализации и проверок для последующей оптимизации: [docs/IMPLEMENTATION_REVIEW.md](docs/IMPLEMENTATION_REVIEW.md). Черновой XML использует номинальную частоту кадров, поэтому для исходников с переменным FPS нужно проверить границы и звук.
 
 Командные утилиты можно запускать отдельно:
 
 ```bash
 python transcribe_stream.py /path/to/video.mp4 --work-dir /path/to/transcript
+python analyze_highlights.py /path/to/video.mp4 /path/to/transcript/transcript_timestamps.json /path/to/highlights.csv
+python deep_analysis.py /path/to/video.mp4 /path/to/highlights.csv /path/to/transcript/transcript_timestamps.json
+python export_clips.py /path/to/video.mp4 /path/to/highlights.csv /path/to/clips
 python highlights_to_fcp7xml.py /path/to/video.mp4 /path/to/highlights.csv /path/to/output.xml
 python render_preview.py /path/to/video.mp4 /path/to/highlights.csv /path/to/preview.mp4
 ```
@@ -60,13 +63,13 @@ mkdir -p workspace
 docker run -d --name stream-editor -p 127.0.0.1:8765:8765 -v "$(pwd)/workspace:/data" stream-editor:release
 ```
 
-На ARM64 замените имя архива на `StreamEditor-Linux-arm64.docker.tar.gz`. Откройте `http://127.0.0.1:8765`; файлы приложения сохраняются в `workspace/stream-editor/`. Windows `.exe` включает FFmpeg и FFprobe. По умолчанию загрузки, транскрипты, CSV, XML, превью, журнал и модели хранятся в `StreamEditor-data` рядом с `.exe`; путь к готовому файлу показывается в блоке «Выполнение». Для записи туда запускайте `.exe` из папки, доступной пользователю для записи. Windows `.exe` пока не подписан. Ручной запуск workflow сохраняет файлы как артефакты Actions без создания релиза.
+На ARM64 замените имя архива на `StreamEditor-Linux-arm64.docker.tar.gz`. Откройте `http://127.0.0.1:8765`; файлы приложения сохраняются в `workspace/stream-editor/`. Windows `.exe` включает FFmpeg и FFprobe. По умолчанию загрузки, транскрипты, CSV, XML, превью, журнал и модели хранятся в `%LOCALAPPDATA%\StreamEditor`; путь к готовому файлу показывается в блоке «Выполнение». Путь можно переопределить переменной окружения `STREAM_EDITOR_DATA`. Windows `.exe` пока не подписан. Ручной запуск workflow сохраняет файлы как артефакты Actions без создания релиза.
 
 ## Разработка и публикация
 
 ```bash
 python -m unittest discover -s tests -v
-python -m py_compile app.py transcribe_stream.py highlights_to_fcp7xml.py render_preview.py
+python -m py_compile app.py transcribe_stream.py analyze_highlights.py deep_analysis.py visual_analysis.py export_clips.py device_profile.py highlights_to_fcp7xml.py render_preview.py
 ```
 
 Медиа, транскрипты, экспорты, локальный виртуальный Python и `.env` исключены через `.gitignore`; образец настроек хранится в [`.env.example`](.env.example). В репозитории остаются исходный код, Docker-конфигурация, сборка релиза, тесты и синтетический пример CSV.

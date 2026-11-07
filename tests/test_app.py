@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 os.environ.setdefault('STREAM_EDITOR_DATA', str(Path(tempfile.gettempdir()) / 'stream-editor-tests'))
@@ -60,13 +61,18 @@ class AppApiTest(unittest.TestCase):
         status, _ = request('do_POST', '/api/project', self.project)
         self.assertEqual(status, 200)
         row = {'start': '00:00:02', 'end': '00:00:05', 'category': 'test',
-               'score': '3', 'reason': 'sample', 'needs_video_review': 'true'}
+               'score': '3', 'reason': 'sample', 'needs_video_review': 'true',
+               'editor_note': 'keep'}
         status, _ = request('do_POST', '/api/highlights', {'rows': [row]})
         self.assertEqual(status, 200)
         status, state = request('do_GET', '/api/state')
         self.assertEqual(status, 200)
         self.assertEqual(state['rows'][0]['reason'], 'sample')
+        self.assertEqual(state['rows'][0]['editor_note'], 'keep')
         self.assertEqual(state['project']['source'], str(self.source.resolve()))
+        self.assertEqual(state['highlight_stats']['count'], 1)
+        self.assertEqual(state['highlight_stats']['duration_seconds'], 3)
+        self.assertIn('vision_device', state)
 
     def test_invalid_interval_does_not_replace_csv(self):
         request('do_POST', '/api/project', self.project)
@@ -77,6 +83,14 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn('error', result)
         self.assertEqual(path.read_text(encoding='utf-8'), 'original')
+
+    def test_cannot_edit_intervals_during_model_job(self):
+        app.save_project(self.project)
+        with mock.patch.object(app, 'job', {'status': 'running', 'kind': 'deep', 'error': ''}):
+            status, result = request('do_POST', '/api/highlights', {'rows': [
+                {'start': '00:00:01', 'end': '00:00:03'}]})
+        self.assertEqual(status, 400)
+        self.assertIn('Дождитесь', result['error'])
 
     def test_missing_source_is_rejected(self):
         self.project['source'] = str(self.root / 'missing.mp4')
@@ -151,6 +165,51 @@ class AppApiTest(unittest.TestCase):
         with mock.patch.object(app, 'job', {'status': 'done', 'kind': 'xml', 'error': ''}):
             state = app.job_state()
         self.assertEqual(state['output_path'], str(self.root / 'output' / 'highlights.xml'))
+
+    def test_visual_report_is_invalidated_by_interval_edit(self):
+        from deep_analysis import fingerprint
+        app.save_project(self.project)
+        row = {'start': '00:00:02', 'end': '00:00:05', 'category': 'game',
+               'score': '4', 'reason': 'manual', 'needs_video_review': 'true', 'relevance': '83'}
+        request('do_POST', '/api/highlights', {'rows': [row]})
+        report_path = Path(self.project['highlights']).with_suffix('.visual.json')
+        report_path.write_text(json.dumps({'identity': fingerprint(self.source, [row], 0),
+                                           'items': [{'event': 4, 'start': row['start'], 'end': row['end']}]}))
+        self.assertEqual(request('do_GET', '/api/state')[1]['visual_report']['items'][0]['event'], 4)
+        row['reason'] = 'revised note'
+        request('do_POST', '/api/highlights', {'rows': [row]})
+        self.assertTrue(report_path.exists())
+        row['end'] = '00:00:06'
+        request('do_POST', '/api/highlights', {'rows': [row]})
+        self.assertFalse(report_path.exists())
+
+    def test_visual_frame_endpoint_only_serves_reported_frames(self):
+        from deep_analysis import fingerprint
+        app.save_project(self.project)
+        row = {'start': '00:00:02', 'end': '00:00:05', 'score': '4'}
+        request('do_POST', '/api/highlights', {'rows': [row]})
+        frame_dir = Path(self.project['highlights']).with_suffix('.visual-frames')
+        frame_dir.mkdir()
+        content = b'\xff\xd8test\xff\xd9'
+        (frame_dir / '000_00.jpg').write_bytes(content)
+        Path(self.project['highlights']).with_suffix('.visual.json').write_text(json.dumps({
+            'identity': fingerprint(self.source, [row], 0),
+            'items': [{'frame_files': ['000_00.jpg'], 'start': row['start'], 'end': row['end']}]}))
+        server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}/api/visual-frame'
+            with urlopen(base + '?index=0&frame=0') as response:
+                self.assertEqual(response.headers['Content-Type'], 'image/jpeg')
+                self.assertEqual(response.read(), content)
+            with self.assertRaises(HTTPError) as invalid:
+                urlopen(base + '?index=0&frame=1')
+            self.assertEqual(invalid.exception.code, 404)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == '__main__':

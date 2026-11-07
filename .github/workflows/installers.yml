@@ -29,7 +29,7 @@ jobs:
             if (-not $binary) { throw "$name missing from FFmpeg archive" }
             Copy-Item $binary.FullName "tools/$name"
           }
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --hidden-import transcribe_stream --hidden-import highlights_to_fcp7xml --hidden-import render_preview --add-binary "tools/ffmpeg.exe;." --add-binary "tools/ffprobe.exe;." --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --hidden-import transcribe_stream --hidden-import highlights_to_fcp7xml --hidden-import render_preview --hidden-import analyze_highlights --hidden-import export_clips --hidden-import device_profile --hidden-import deep_analysis --hidden-import visual_analysis --add-binary "tools/ffmpeg.exe;." --add-binary "tools/ffprobe.exe;." --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." --add-data "analyze_highlights.py;." --add-data "export_clips.py;." --add-data "deep_analysis.py;." app.py
       - name: Check Windows executable serves the page
         shell: pwsh
         run: |
@@ -94,6 +94,35 @@ jobs:
             Get-Content task-data\job.log -ErrorAction SilentlyContinue
             throw 'Packaged transcription failed'
           }
+          Remove-Item task-data\job.log
+          Write-Host 'Checking automatic highlight analysis'
+          $analyze = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'analyze_highlights.py', 'test.mp4', 'task-data\transcript\transcript_timestamps.json', 'auto-highlights.csv') -PassThru
+          if (-not $analyze.WaitForExit(120000)) { Stop-Process -Id $analyze.Id -Force; throw 'Packaged analysis timed out' }
+          if ($analyze.ExitCode -ne 0 -or -not (Test-Path auto-highlights.csv)) {
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged analysis failed'
+          }
+          Remove-Item task-data\job.log
+          Write-Host 'Checking standalone clip export'
+          $clips = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'export_clips.py', 'test.mp4', 'highlights.csv', 'test-clips') -PassThru
+          if (-not $clips.WaitForExit(120000)) { Stop-Process -Id $clips.Id -Force; throw 'Packaged clip export timed out' }
+          if ($clips.ExitCode -ne 0 -or -not (Test-Path test-clips\clip_001.mp4)) {
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged clip export failed'
+          }
+      - name: Check packaged deep-analysis task wiring
+        shell: pwsh
+        run: |
+          Remove-Item task-data\job.log -ErrorAction SilentlyContinue
+          $deep = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'deep_analysis.py', 'test.mp4', 'missing-highlights.csv', 'task-data\transcript\transcript_timestamps.json') -PassThru
+          if (-not $deep.WaitForExit(120000)) { Stop-Process -Id $deep.Id -Force; throw 'Packaged deep task timed out' }
+          $log = Get-Content task-data\job.log -Raw -ErrorAction SilentlyContinue
+          if ($deep.ExitCode -eq 0 -or $log -notmatch 'missing-highlights.csv') { throw 'Packaged deep task was not loaded correctly' }
+      - name: Check Windows local vision model
+        shell: pwsh
+        run: |
+          $env:PATH = "$(Join-Path $PWD 'tools');$env:PATH"
+          python tests/visual_smoke.py
       - name: Save Windows task diagnostics
         if: failure() && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -133,6 +162,9 @@ jobs:
         run: docker buildx build --platform linux/${{ matrix.arch }} --load --tag stream-editor:release .
       - name: Check container startup
         run: docker run --rm stream-editor:release python -c "import app; import faster_whisper"
+      - name: Check Linux local vision model
+        if: matrix.arch == 'amd64'
+        run: docker run --rm -v "$PWD:/src:ro" -w /src stream-editor:release python tests/visual_smoke.py
       - name: Save container image
         shell: bash
         run: docker save stream-editor:release | gzip > StreamEditor-Linux-${{ matrix.arch }}.docker.tar.gz
@@ -141,9 +173,21 @@ jobs:
           name: StreamEditor-Linux-${{ matrix.arch }}
           path: StreamEditor-Linux-${{ matrix.arch }}.docker.tar.gz
           if-no-files-found: error
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: brew install ffmpeg
+      - run: python -m pip install -r requirements-desktop.txt
+      - run: python -m unittest discover -s tests -q
+      - name: Check macOS local vision model
+        run: python tests/visual_smoke.py
   release:
     if: github.event_name != 'workflow_dispatch'
-    needs: [windows, container]
+    needs: [windows, container, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

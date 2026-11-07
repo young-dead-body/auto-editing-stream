@@ -17,19 +17,24 @@ import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from device_profile import profile
+from visual_analysis import vision_profile
 
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 EXE_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 os.environ['PATH'] = os.pathsep.join([str(BASE), str(EXE_DIR), os.environ.get('PATH', '')])
 if sys.platform == 'darwin':
     os.environ['PATH'] = os.pathsep.join(['/opt/homebrew/bin', '/usr/local/bin', os.environ.get('PATH', '')])
-DATA = Path(os.environ.get('STREAM_EDITOR_DATA', EXE_DIR / 'StreamEditor-data' if getattr(sys, 'frozen', False)
-                           else Path.home() / 'StreamEditor' / 'web')).expanduser()
+DEFAULT_DATA = (Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'StreamEditor'
+                if sys.platform == 'win32' and getattr(sys, 'frozen', False)
+                else EXE_DIR / 'StreamEditor-data' if getattr(sys, 'frozen', False)
+                else Path.home() / 'StreamEditor' / 'web')
+DATA = Path(os.environ.get('STREAM_EDITOR_DATA', DEFAULT_DATA)).expanduser()
 DATA.mkdir(parents=True, exist_ok=True)
 if getattr(sys, 'frozen', False):
     os.environ.setdefault('HF_HOME', str(DATA / 'models'))
 CONFIG = DATA / 'project.json'
-COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review']
+COLUMNS = ['start', 'end', 'category', 'score', 'reason', 'needs_video_review', 'relevance']
 job_lock = threading.Lock()
 job = {'status': 'idle', 'kind': '', 'error': ''}
 MAX_UPLOAD = 100 * 1024 ** 3
@@ -76,12 +81,20 @@ def job_state():
     current['elapsed_seconds'] = round(current.get('finished_at', time.time()) - current['started_at']) if current.get('started_at') else 0
     p = project()
     current['metrics'] = transcript_metrics(p)
+    if current.get('kind') == 'deep' and p.get('highlights'):
+        progress = Path(p['highlights']).with_suffix('.visual-progress.json')
+        if progress.is_file():
+            current['visual_progress'] = json.loads(progress.read_text(encoding='utf-8'))
     if current['status'] == 'done':
         kind = current.get('kind')
         if kind == 'transcribe' and p.get('transcript_dir'):
             current['output_path'] = str(Path(p['transcript_dir']) / 'transcript_timestamps.txt')
         elif kind in ('xml', 'preview') and p.get('output_dir'):
             current['output_path'] = str(Path(p['output_dir']) / ('highlights.xml' if kind == 'xml' else 'preview.mp4'))
+        elif kind in ('analyze', 'deep'):
+            current['output_path'] = p.get('highlights', '')
+        elif kind == 'clips':
+            current['output_path'] = str(Path(p['output_dir']) / 'clips')
     log = DATA / 'job.log'
     current['log'] = log.read_text(encoding='utf-8', errors='replace')[-12000:] if log.exists() else ''
     return current
@@ -101,19 +114,54 @@ def stamp_seconds(value):
     return hours * 3600 + minutes * 60 + seconds
 
 
+def highlight_summary(rows, p):
+    duration = 0
+    for row in rows:
+        try:
+            duration += max(0, stamp_seconds(row['end']) - stamp_seconds(row['start']))
+        except (ValueError, KeyError):
+            continue
+    return {'count': len(rows), 'duration_seconds': duration,
+            'source_duration_seconds': transcript_metrics(p)['duration_seconds'], 'method': 'список моментов'}
+
+
+def visual_report_for(p, rows):
+    if not p.get('highlights') or not p.get('source'):
+        return {}
+    path = Path(p['highlights']).with_suffix('.visual.json')
+    if not path.is_file():
+        return {}
+    from deep_analysis import fingerprint
+    try:
+        candidate = json.loads(path.read_text(encoding='utf-8'))
+        return candidate if candidate.get('identity') == fingerprint(p['source'], rows, p.get('audio_stream', 0)) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
 def command_for(kind, p):
     source = Path(p['source'])
     output = Path(p['output_dir'])
     output.mkdir(parents=True, exist_ok=True)
     if kind == 'transcribe':
         return 'transcribe_stream.py', [str(source), '--work-dir', p['transcript_dir'], '--audio-stream', str(p['audio_stream']), '--backend', p['backend']]
+    if kind == 'analyze':
+        transcript = Path(p['transcript_dir']) / 'transcript_timestamps.json'
+        return 'analyze_highlights.py', [str(source), str(transcript), p['highlights'], '--audio-stream', str(p['audio_stream'])]
     csv_path = p['highlights']
     if not Path(csv_path).is_file():
         raise ValueError('Сначала сохраните список хайлайтов')
+    if kind == 'deep':
+        transcript = Path(p['transcript_dir']) / 'transcript_timestamps.json'
+        return 'deep_analysis.py', [str(source), csv_path, str(transcript),
+                                    '--audio-stream', str(p['audio_stream']),
+                                    '--cache-dir', str(DATA / 'models' / 'visual')]
     if kind == 'xml':
         return 'highlights_to_fcp7xml.py', [str(source), csv_path, str(output / 'highlights.xml')]
     if kind == 'preview':
         return 'render_preview.py', [str(source), csv_path, str(output / 'preview.mp4')]
+    if kind == 'clips':
+        return 'export_clips.py', [str(source), csv_path, str(output / 'clips'), '--audio-stream', str(p['audio_stream'])]
     raise ValueError('Неизвестная операция')
 
 
@@ -173,9 +221,45 @@ class Handler(BaseHTTPRequestHandler):
                 segments = []
                 if transcript and transcript.is_file():
                     segments = json.loads(transcript.read_text(encoding='utf-8')).get('segments', [])
-                self.reply({'project': p, 'rows': rows_for(p.get('highlights')), 'segments': segments, 'job': job_state()})
+                stats_path = Path(p['highlights']).with_suffix('.stats.json') if p.get('highlights') else None
+                stats = json.loads(stats_path.read_text(encoding='utf-8')) if stats_path and stats_path.is_file() else {}
+                rows = rows_for(p.get('highlights'))
+                if rows and not stats:
+                    stats = highlight_summary(rows, p)
+                report = visual_report_for(p, rows)
+                hardware = profile()
+                try:
+                    vision_model, vision_device = vision_profile(hardware['ram_gb'], hardware['vram_gb'])
+                    vision = {'model': vision_model, 'device': vision_device}
+                except RuntimeError as exc:
+                    vision = {'error': str(exc)}
+                self.reply({'project': p, 'rows': rows, 'segments': segments,
+                            'job': job_state(), 'device': hardware, 'vision_device': vision,
+                            'highlight_stats': stats,
+                            'visual_report': report})
             elif path == '/api/job':
                 self.reply(job_state())
+            elif path == '/api/visual-frame':
+                p = project()
+                report = visual_report_for(p, rows_for(p.get('highlights')))
+                params = parse_qs(urlparse(self.path).query)
+                index = int(params.get('index', ['-1'])[0])
+                frame = int(params.get('frame', ['-1'])[0])
+                items = report.get('items', [])
+                if index < 0 or index >= len(items):
+                    return self.send_error(404)
+                files = items[index].get('frame_files', [])
+                if frame < 0 or frame >= len(files) or not re.fullmatch(r'\d{3,6}_\d{2}\.jpg', files[frame]):
+                    return self.send_error(404)
+                image = Path(p['highlights']).with_suffix('.visual-frames') / files[frame]
+                if not image.is_file():
+                    return self.send_error(404)
+                raw = image.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
             elif path == '/api/video':
                 p = project()
                 source = Path(p.get('source', ''))
@@ -208,12 +292,16 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({'error': str(exc)}, 400)
 
     def do_POST(self):
+        global job
         try:
             if urlparse(self.path).path == '/api/upload':
                 return self.upload_video()
             data = self.body()
             path = urlparse(self.path).path
             if path == '/api/project':
+                with job_lock:
+                    if job['status'] == 'running':
+                        raise ValueError('Дождитесь завершения текущей операции')
                 source = Path(str(data.get('source', ''))).expanduser().resolve()
                 if not source.is_file():
                     raise ValueError('Исходный видеофайл не найден')
@@ -230,20 +318,42 @@ class Handler(BaseHTTPRequestHandler):
                 p = project()
                 if not p:
                     raise ValueError('Сначала укажите видео')
+                with job_lock:
+                    if job['status'] == 'running':
+                        raise ValueError('Дождитесь завершения текущей операции')
                 rows = data.get('rows')
                 if not isinstance(rows, list):
                     raise ValueError('Ожидался список хайлайтов')
                 for row in rows:
+                    if not isinstance(row, dict):
+                        raise ValueError('Каждый момент должен быть объектом')
                     if stamp_seconds(str(row.get('start', ''))) >= stamp_seconds(str(row.get('end', ''))):
                         raise ValueError('Начало должно быть раньше конца')
                 target = Path(p['highlights'])
                 target.parent.mkdir(parents=True, exist_ok=True)
+                old_intervals = [(row.get('start'), row.get('end')) for row in rows_for(target)]
+                new_intervals = [(row.get('start'), row.get('end')) for row in rows]
                 stream = io.StringIO()
-                writer = csv.DictWriter(stream, fieldnames=COLUMNS)
+                fields = list(COLUMNS)
+                for row in rows:
+                    for key in row:
+                        if key not in fields:
+                            fields.append(key)
+                writer = csv.DictWriter(stream, fieldnames=fields)
                 writer.writeheader()
-                writer.writerows({key: str(row.get(key, '')) for key in COLUMNS} for row in rows)
+                writer.writerows({key: str(row.get(key, '')) for key in fields} for row in rows)
                 target.with_suffix(target.suffix + '.tmp').write_text(stream.getvalue(), encoding='utf-8')
                 target.with_suffix(target.suffix + '.tmp').replace(target)
+                if old_intervals != new_intervals:
+                    target.with_suffix('.stats.json').unlink(missing_ok=True)
+                    target.with_suffix('.visual.json').unlink(missing_ok=True)
+                    target.with_suffix('.visual-progress.json').unlink(missing_ok=True)
+                    frames = target.with_suffix('.visual-frames')
+                    if frames.is_dir():
+                        for image in frames.glob('[0-9]*_[0-9][0-9].jpg'):
+                            image.unlink()
+                        if not any(frames.iterdir()):
+                            frames.rmdir()
                 self.reply({'saved': str(target)})
             elif path == '/api/start':
                 p = project()
@@ -251,7 +361,6 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('Сначала укажите видео')
                 kind = data.get('kind')
                 command_for(kind, p)
-                global job
                 with job_lock:
                     if job['status'] == 'running':
                         raise ValueError('Другая операция ещё выполняется')
@@ -313,7 +422,8 @@ def main():
                 sys.stderr = stream
         import runpy
         script = BASE / sys.argv[2]
-        if script.name not in ('transcribe_stream.py', 'highlights_to_fcp7xml.py', 'render_preview.py'):
+        if script.name not in ('transcribe_stream.py', 'highlights_to_fcp7xml.py', 'render_preview.py',
+                               'analyze_highlights.py', 'deep_analysis.py', 'export_clips.py'):
             raise SystemExit('Unknown task')
         sys.argv = [str(script), *sys.argv[3:]]
         runpy.run_path(str(script), run_name='__main__')

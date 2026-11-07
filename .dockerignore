@@ -3,6 +3,11 @@
 !transcribe_stream.py
 !highlights_to_fcp7xml.py
 !render_preview.py
+!analyze_highlights.py
+!deep_analysis.py
+!visual_analysis.py
+!device_profile.py
+!export_clips.py
 !requirements-desktop.txt
 !web/
 !web/index.html

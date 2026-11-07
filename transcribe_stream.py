@@ -15,6 +15,7 @@ import subprocess
 import sys
 import importlib.util
 from pathlib import Path
+from device_profile import profile
 
 
 def run(cmd: list[str]) -> None:
@@ -125,11 +126,14 @@ def main() -> int:
         ap.error(f'File not found: {source}')
     if args.audio_stream < 0 or args.chunk_minutes < 1 or args.max_chunks < 0:
         ap.error('audio-stream >= 0, chunk-minutes >= 1, max-chunks >= 0 required')
-    backend = args.backend
-    if backend == 'auto':
-        backend = 'mlx' if sys.platform == 'darwin' and shutil.which('mlx_whisper') else 'faster-whisper'
+    device = profile()
+    backend = device['backend'] if args.backend == 'auto' else args.backend
     if args.model is None:
-        args.model = 'mlx-community/whisper-large-v3-turbo' if backend == 'mlx' else 'small'
+        args.model = device['model'] if backend == device['backend'] else (
+            'mlx-community/whisper-large-v3-turbo' if backend == 'mlx' else 'small')
+    whisper_device = device['device'] if backend == 'faster-whisper' and device['device'] == 'cuda' else 'cpu'
+    compute_type = device['compute_type'] if whisper_device == 'cuda' else 'int8'
+    print(f'Whisper: {backend}, {args.model}, {whisper_device}, {compute_type}', flush=True)
     for command in ('ffmpeg', 'ffprobe'):
         if shutil.which(command) is None:
             ap.error(f'{command} is missing from PATH. See README.md for setup.')
@@ -204,7 +208,13 @@ def main() -> int:
         else:
             from faster_whisper import WhisperModel
             if whisper_model is None:
-                whisper_model = WhisperModel(args.model, device='cpu', compute_type='int8')
+                try:
+                    whisper_model = WhisperModel(args.model, device=whisper_device, compute_type=compute_type)
+                except (RuntimeError, OSError) as exc:
+                    if whisper_device != 'cuda':
+                        raise
+                    print(f'CUDA недоступна ({exc}); продолжение на CPU', flush=True)
+                    whisper_model = WhisperModel(args.model, device='cpu', compute_type='int8')
             segments, _ = whisper_model.transcribe(str(mp3), language=args.language,
                 condition_on_previous_text=args.condition_on_previous_text == 'True')
             write_atomic(out_json, json.dumps({'segments': [
