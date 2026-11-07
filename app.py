@@ -128,6 +128,10 @@ def run_job(kind, p):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        if sys.stderr is not None:
+            super().log_message(format, *args)
+
     def reply(self, data, status=200):
         raw = json.dumps(data, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -303,7 +307,8 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f'http://127.0.0.1:{args.port}'
-    print(f'Stream Editor: {url}', flush=True)
+    if sys.stdout is not None:
+        print(f'Stream Editor: {url}', flush=True)
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:

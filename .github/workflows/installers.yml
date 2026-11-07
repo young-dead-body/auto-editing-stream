@@ -17,6 +17,27 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install pyinstaller -r requirements-desktop.txt
       - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
+      - name: Check Windows executable serves the page
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList '--no-browser' -PassThru
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 45; $attempt++) {
+              if ($process.HasExited) { throw "StreamEditor.exe exited with code $($process.ExitCode)" }
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200 -and $response.Content -match '<html') {
+                  $ready = $true
+                  break
+                }
+              } catch { }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $ready) { throw 'StreamEditor.exe did not serve the page within 90 seconds' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: StreamEditor-Windows

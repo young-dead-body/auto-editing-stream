@@ -1,10 +1,13 @@
-"""Checks the local API contract without opening a network port."""
+"""Checks the local API contract and server startup."""
 import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
+from unittest import mock
+from urllib.request import urlopen
 
 os.environ.setdefault('STREAM_EDITOR_DATA', str(Path(tempfile.gettempdir()) / 'stream-editor-tests'))
 import app  # noqa: E402
@@ -105,6 +108,28 @@ class AppApiTest(unittest.TestCase):
         metrics = app.transcript_metrics(self.project)
         self.assertEqual(metrics['completed_chunks'], 1)
         self.assertEqual(metrics['percent'], 50)
+
+    def test_http_response_without_console_streams(self):
+        server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch.object(app.sys, 'stderr', None):
+                with urlopen(f'http://127.0.0.1:{server.server_port}/', timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn(b'<html', response.read().lower())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_startup_without_console_output(self):
+        with mock.patch.object(app.sys, 'argv', ['app.py', '--no-browser', '--port', '0']), \
+             mock.patch.object(app.sys, 'stdout', None), \
+             mock.patch.object(app, 'ThreadingHTTPServer') as server:
+            app.main()
+        server.return_value.serve_forever.assert_called_once_with()
+        server.return_value.server_close.assert_called_once_with()
 
 
 if __name__ == '__main__':
