@@ -1,0 +1,63 @@
+Windows packaged task diagnostics
+Tag: v0.1.4
+Job log:
+1/1: test-clips\clip_001.mp4
+Visual smoke log:
+Traceback (most recent call last):
+  File "D:\a\auto-editing-stream\auto-editing-stream\tests\visual_smoke.py", line 22, in <module>
+    with VisionServer(cache, '256m', 'cpu') as model:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\a\auto-editing-stream\auto-editing-stream\visual_analysis.py", line 209, in __enter__
+    model, projector = model_paths(self.cache, self.tier)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\a\auto-editing-stream\auto-editing-stream\visual_analysis.py", line 93, in model_paths
+    paths.append(download_checked(url, target / name, digest))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\a\auto-editing-stream\auto-editing-stream\visual_analysis.py", line 72, in download_checked
+    print(f'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 {destination.name} ({round(total / 1024**2)} \u041c\u0438\u0411)', flush=True)
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-7: character maps to <undefined>
+Output files:
+D:\a\auto-editing-stream\auto-editing-stream\test.mp4
+D:\a\auto-editing-stream\auto-editing-stream\examples\highlights.csv
+D:\a\auto-editing-stream\auto-editing-stream\highlights.csv
+D:\a\auto-editing-stream\auto-editing-stream\highlights.xml
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript
+D:\a\auto-editing-stream\auto-editing-stream\task-data\job.log
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\.agent_harnesses.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\.locks
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\CACHEDIR.TAG
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\.locks\models--Systran--faster-whisper-tiny
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\blobs
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\refs
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\trees
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\blobs\3baa18e2b321a2f489614607852a729fcd516480
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\blobs\7818adb6de9fa3064d3ff81226fdd675be1f6344
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\blobs\c9074644d9d1205686f16d411564729461324b75
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\blobs\dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\refs\main
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356\config.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356\model.bin
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356\tokenizer.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356\vocabulary.txt
+D:\a\auto-editing-stream\auto-editing-stream\task-data\models\hub\models--Systran--faster-whisper-tiny\trees\d90ca5fe260221311c53c58e660288d3deb8d356.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\chunks
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\job_manifest.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\progress.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\transcript_timestamps.json
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\transcript_timestamps.txt
+D:\a\auto-editing-stream\auto-editing-stream\task-data\transcript\chunks\chunk_0000.json
+Processes:
+
+ProcessId CommandLine
+--------- -----------
+     1928 "D:\a\auto-editing-stream\auto-editing-stream\dist\StreamEditor.exe" --no-browser
+
+
