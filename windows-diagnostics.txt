@@ -1,0 +1,7 @@
+Windows packaged task diagnostics
+Tag: v0.1.1
+Job log:
+Output files:
+D:\a\auto-editing-stream\auto-editing-stream\examples\highlights.csv
+Processes:
+
