@@ -21,11 +21,30 @@ jobs:
       - name: Download FFmpeg for the portable executable
         shell: pwsh
         run: |
-          Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          $sources = @(
+            'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
+            'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+          )
+          $ffmpegRoot = $null
+          for ($source = 0; $source -lt $sources.Count -and -not $ffmpegRoot; $source++) {
+            for ($attempt = 1; $attempt -le 2 -and -not $ffmpegRoot; $attempt++) {
+              $archive = "ffmpeg-$source-$attempt.zip"
+              $destination = "ffmpeg-$source-$attempt"
+              try {
+                Invoke-WebRequest $sources[$source] -OutFile $archive -ErrorAction Stop
+                if ((Get-Item $archive).Length -lt 1000000) { throw 'FFmpeg archive is incomplete' }
+                Expand-Archive $archive -DestinationPath $destination -ErrorAction Stop
+                $ffmpegRoot = $destination
+              } catch {
+                Write-Warning "FFmpeg download attempt failed: $_"
+                Start-Sleep -Seconds 5
+              }
+            }
+          }
+          if (-not $ffmpegRoot) { throw 'Could not download FFmpeg from either source' }
           New-Item -ItemType Directory -Path tools | Out-Null
           foreach ($name in @('ffmpeg.exe', 'ffprobe.exe')) {
-            $binary = Get-ChildItem ffmpeg -Recurse -Filter $name | Select-Object -First 1
+            $binary = Get-ChildItem $ffmpegRoot -Recurse -Filter $name | Select-Object -First 1
             if (-not $binary) { throw "$name missing from FFmpeg archive" }
             Copy-Item $binary.FullName "tools/$name"
           }
