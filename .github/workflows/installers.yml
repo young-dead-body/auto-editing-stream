@@ -29,7 +29,7 @@ jobs:
             if (-not $binary) { throw "$name missing from FFmpeg archive" }
             Copy-Item $binary.FullName "tools/$name"
           }
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --add-binary "tools/ffmpeg.exe;." --add-binary "tools/ffprobe.exe;." --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name StreamEditor --collect-all faster_whisper --collect-all ctranslate2 --hidden-import transcribe_stream --hidden-import highlights_to_fcp7xml --hidden-import render_preview --add-binary "tools/ffmpeg.exe;." --add-binary "tools/ffprobe.exe;." --add-data "web;web" --add-data "transcribe_stream.py;." --add-data "highlights_to_fcp7xml.py;." --add-data "render_preview.py;." app.py
       - name: Check Windows executable serves the page
         shell: pwsh
         run: |
