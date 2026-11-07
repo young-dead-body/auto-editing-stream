@@ -52,17 +52,30 @@ jobs:
       - name: Check packaged XML export and transcription startup
         shell: pwsh
         run: |
-          & .\tools\ffmpeg.exe -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=25 -f lavfi -i sine=frequency=440 -t 3 -c:v mpeg4 -c:a aac -ac 2 test.mp4
+          Write-Host 'Creating test video'
+          & .\tools\ffmpeg.exe -nostdin -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x240:rate=25 -f lavfi -i sine=frequency=440 -t 3 -c:v mpeg4 -c:a aac -ac 2 test.mp4
           if ($LASTEXITCODE -ne 0) { throw 'Could not create test video' }
           Set-Content -Path highlights.csv -Value @('start,end', '00:00:00,00:00:01')
           $env:STREAM_EDITOR_DATA = Join-Path $PWD 'task-data'
-          $xml = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'highlights_to_fcp7xml.py', 'test.mp4', 'highlights.csv', 'highlights.xml') -Wait -PassThru
+          Write-Host 'Checking XML export'
+          $xml = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'highlights_to_fcp7xml.py', 'test.mp4', 'highlights.csv', 'highlights.xml') -PassThru
+          if (-not $xml.WaitForExit(120000)) {
+            Stop-Process -Id $xml.Id -Force
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged XML export timed out'
+          }
           if ($xml.ExitCode -ne 0 -or -not (Test-Path highlights.xml)) {
             Get-Content task-data\job.log -ErrorAction SilentlyContinue
             throw 'Packaged XML export failed'
           }
           Remove-Item task-data\job.log
-          $transcribe = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'transcribe_stream.py', 'test.mp4', '--work-dir', 'task-data\transcript', '--audio-stream', '1') -Wait -PassThru
+          Write-Host 'Checking transcription startup'
+          $transcribe = Start-Process -FilePath .\dist\StreamEditor.exe -ArgumentList @('--task', 'transcribe_stream.py', 'test.mp4', '--work-dir', 'task-data\transcript', '--audio-stream', '1') -PassThru
+          if (-not $transcribe.WaitForExit(120000)) {
+            Stop-Process -Id $transcribe.Id -Force
+            Get-Content task-data\job.log -ErrorAction SilentlyContinue
+            throw 'Packaged transcription startup timed out'
+          }
           if ($transcribe.ExitCode -ne 2 -or -not ((Get-Content task-data\job.log -Raw) -match 'Audio stream 1 does not exist')) {
             Get-Content task-data\job.log -ErrorAction SilentlyContinue
             throw 'Packaged transcription startup failed'
